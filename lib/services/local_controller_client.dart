@@ -24,7 +24,7 @@ class LocalControllerClient {
     required void Function(String) onStatusChanged,int port=47531}) async {
     await disconnect();
     final code=normalizedPairingCode(pairingCode);
-    if(!isPairingCode(code))throw const FormatException('Enter the full 16-character pairing code.');
+    if(!isPairingCode(code)) { throw const FormatException('Enter the full 16-character pairing code.'); }
     _code=code;_onButtons=onButtonsChanged;_onStatus=onStatusChanged;_closing=false;
     _notify('Connecting to host');
     final socket=await Socket.connect(host.trim(),port,timeout:const Duration(seconds:8));
@@ -102,7 +102,7 @@ class LocalControllerClient {
     _socket=null;_authenticated=false;_heartbeat?.cancel();_heartbeat=null;
     _buffer?.close();_buffer=null;_sessionKey=null;_mask=0;
     _onButtons?.call(const <NesButton>{});
-    if(!_closing)_notify('Host disconnected');
+    if(!_closing) { _notify('Host disconnected'); }
     final h=_handshake;
     if(h!=null&&!h.isCompleted)h.completeError(const SocketException('Host disconnected during pairing.'));
     socket.destroy();

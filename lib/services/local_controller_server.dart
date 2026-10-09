@@ -94,7 +94,7 @@ class LocalControllerServer {
     _watchdog?.cancel();
     _watchdog=Timer.periodic(const Duration(milliseconds:500),(_){
       if(_authenticated&&DateTime.now().difference(_lastFrame)>const Duration(seconds:2)) {
-        final active=_client;if(active!=null)_drop(active,status:'Controller timed out');
+        final active=_client;if(active!=null) { _drop(active,status:'Controller timed out'); }
       }
     });
   }

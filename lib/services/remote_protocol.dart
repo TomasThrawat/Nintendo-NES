@@ -42,10 +42,10 @@ class JsonLineBuffer {
   final List<int> _pending=<int>[];
   bool _closed=false;
   void add(List<int> bytes) {
-    if(_closed)return;
+    if(_closed) { return; }
     for(final byte in bytes) {
       if(byte==10) {
-        if(_pending.isNotEmpty&&_pending.last==13)_pending.removeLast();
+        if(_pending.isNotEmpty&&_pending.last==13) { _pending.removeLast(); }
         try {
           final line=utf8.decode(_pending,allowMalformed:false);
           _pending.clear(); onLine(line);

@@ -15,8 +15,8 @@ void main() {
     final seen=<Set<NesButton>>[];
     final host=LocalControllerServer(port:0,onButtonsChanged:(buttons){
       seen.add(Set<NesButton>.of(buttons));
-      if(buttons.contains(NesButton.a)&&buttons.contains(NesButton.right)&&!updates.isCompleted)updates.complete();
-      if(buttons.isEmpty&&updates.isCompleted&&!released.isCompleted)released.complete();
+      if(buttons.contains(NesButton.a)&&buttons.contains(NesButton.right)&&!updates.isCompleted) { updates.complete(); }
+      if(buttons.isEmpty&&updates.isCompleted&&!released.isCompleted) { released.complete(); }
     },onStatusChanged:(_){});
     final client=LocalControllerClient();
     try {

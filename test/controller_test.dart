@@ -9,7 +9,7 @@ void main() {
     expect(c.readSerial()&1,0);
     expect(c.readSerial()&1,0);
     expect(c.readSerial()&1,1);
-    for(var i=0;i<4;i++) expect(c.readSerial()&1,0);
+    for(var i=0;i<4;i++) { expect(c.readSerial()&1,0); }
     expect(c.readSerial()&1,1);
   });
   test('strobe reads live A state and mask supports simultaneous presses', () {

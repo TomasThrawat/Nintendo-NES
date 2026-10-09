@@ -31,7 +31,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final result=await FilePicker.platform.pickFiles(type:FileType.custom,
         allowedExtensions:const ['nes'],withData:true,allowMultiple:false);
-      if(result==null||result.files.isEmpty)return;
+      if(result==null||result.files.isEmpty) { return; }
       final file=result.files.single,bytes=file.bytes;
       if(bytes==null)throw const RomFormatException('Could not read the selected ROM file.');
       _emulator.loadRom(Uint8List.fromList(bytes));
