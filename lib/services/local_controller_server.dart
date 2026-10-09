@@ -26,7 +26,7 @@ class LocalControllerServer {
   int get boundPort=>_server?.port??port;
 
   Future<void> start() async {
-    if(_server!=null)return;
+    if(_server!=null) { return; }
     _pairCode=newPairingCode(); _badAttempts=0;
     try {
       _server=await ServerSocket.bind(InternetAddress.anyIPv4,port);
@@ -66,7 +66,7 @@ class LocalControllerServer {
   }
 
   void _handleLine(Socket socket,String line) {
-    if(!identical(socket,_client)||line.isEmpty)return;
+    if(!identical(socket,_client)||line.isEmpty) { return; }
     try {
       final data=jsonDecode(line);
       if(data is! Map<String,dynamic>){_drop(socket,status:'Invalid controller message');return;}
@@ -109,7 +109,7 @@ class LocalControllerServer {
     if(!constantTimeEquals(mac,protocolMac(key,'input|$sequence|$mask'))) {
       _drop(socket,status:'Controller authentication failed');return;
     }
-    if(sequence<=_lastSequence)return;
+    if(sequence<=_lastSequence) { return; }
     _lastSequence=sequence;_lastFrame=DateTime.now();
     onButtonsChanged(NesController.buttonsFromMask(mask));
   }
@@ -136,10 +136,10 @@ class LocalControllerServer {
       for(final interface in interfaces) {
         for(final address in interface.addresses) {
           final ip=address.address;
-          if(address.isLoopback||ip.startsWith('169.254.')||ip=='0.0.0.0')continue;
+          if(address.isLoopback||ip.startsWith('169.254.')||ip=='0.0.0.0') { continue; }
           fallback.add(ip);
           final name=interface.name.toLowerCase();
-          if(name.contains('wlan')||name.contains('wifi'))preferred.add(ip);
+          if(name.contains('wlan')||name.contains('wifi')) { preferred.add(ip); }
         }
       }
       return (preferred.isNotEmpty?preferred:fallback).toSet().toList()..sort();

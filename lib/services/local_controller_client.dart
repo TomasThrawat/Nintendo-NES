@@ -98,13 +98,13 @@ class LocalControllerClient {
     final socket=_socket;if(socket!=null)_closed(socket);
   }
   void _closed(Socket socket) {
-    if(!identical(socket,_socket))return;
+    if(!identical(socket,_socket)) { return; }
     _socket=null;_authenticated=false;_heartbeat?.cancel();_heartbeat=null;
     _buffer?.close();_buffer=null;_sessionKey=null;_mask=0;
     _onButtons?.call(const <NesButton>{});
     if(!_closing) { _notify('Host disconnected'); }
     final h=_handshake;
-    if(h!=null&&!h.isCompleted)h.completeError(const SocketException('Host disconnected during pairing.'));
+    if(h!=null&&!h.isCompleted) { h.completeError(const SocketException('Host disconnected during pairing.')); }
     socket.destroy();
   }
   void _notify(String value)=>_onStatus?.call(value);

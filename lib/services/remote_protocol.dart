@@ -16,7 +16,7 @@ String newProtocolNonce() {
 }
 String protocolMac(String key,String message)=>Hmac(sha256,utf8.encode(key)).convert(utf8.encode(message)).toString();
 bool constantTimeEquals(String a,String b) {
-  if(a.length!=b.length)return false;
+  if(a.length!=b.length) { return false; }
   var diff=0;
   for(var i=0;i<a.length;i++){diff|=a.codeUnitAt(i)^b.codeUnitAt(i);}
   return diff==0;
@@ -25,11 +25,11 @@ bool isProtocolNonce(Object? v)=>v is String&&RegExp(r'^[0-9a-f]{32}$').hasMatch
 String normalizedPairingCode(String v)=>v.trim().toUpperCase();
 bool isPairingCode(String v)=>v.length==16&&v.split('').every(_alphabet.contains);
 int parseButtonMask(Object? v) {
-  if(v is! int||v<0||v>255)throw const FormatException('Invalid input mask.');
+  if(v is! int||v<0||v>255) { throw const FormatException('Invalid input mask.'); }
   return v;
 }
 int parseSequence(Object? v) {
-  if(v is! int||v<0||v>9007199254740991)throw const FormatException('Invalid input sequence.');
+  if(v is! int||v<0||v>9007199254740991) { throw const FormatException('Invalid input sequence.'); }
   return v;
 }
 

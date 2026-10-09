@@ -33,9 +33,9 @@ class _HomeScreenState extends State<HomeScreen> {
         allowedExtensions:const ['nes'],withData:true,allowMultiple:false);
       if(result==null||result.files.isEmpty) { return; }
       final file=result.files.single,bytes=file.bytes;
-      if(bytes==null)throw const RomFormatException('Could not read the selected ROM file.');
+      if(bytes==null) { throw const RomFormatException('Could not read the selected ROM file.'); }
       _emulator.loadRom(Uint8List.fromList(bytes));
-      if(!mounted)return;
+      if(!mounted) { return; }
       setState(() {
         _romName=file.name;
         _message='ROM header validated and CPU reset completed. Complete gameplay is not available yet: the PPU renderer, APU audio, and frame scheduler are not implemented.';
