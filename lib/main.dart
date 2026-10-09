@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
-import 'core/cartridge/ines_rom.dart';
 import 'core/emulator.dart';
 import 'ui/remote_screen.dart';
 
@@ -84,7 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
           label:const Text('Use this device as controller'),style:_outline()),
         const SizedBox(height:24),const Divider(color:Colors.white24),
         const Text('Implemented: iNES/NES 2.0 header parsing, NROM mapping, official 6502 instruction core, controller serial input, and authenticated local Wi-Fi input transport. Not implemented: PPU rendering, APU audio, frame timing, battery save persistence, and save states.',
-          style:const TextStyle(color:Colors.white54,height:1.45)),
+          style:TextStyle(color:Colors.white54,height:1.45)),
       ])));
   }
   ButtonStyle _outline()=>OutlinedButton.styleFrom(foregroundColor:Colors.white,
