@@ -78,7 +78,24 @@ jobs:
               print("Native libraries:", len(native))
               print("Native ABI inspection passed: arm64-v8a only")
           PY
-          apkanalyzer manifest application-id "$apk" || true
+          sdk="$(printenv ANDROID_SDK_ROOT || printenv ANDROID_HOME || printf '%s' /usr/local/lib/android/sdk)"
+          test -d "$sdk/build-tools"
+          aapt="$(find "$sdk/build-tools" -type f -name aapt -perm -u+x | sort -V | tail -n 1)"
+          if [ -z "$aapt" ]; then
+            echo "Android SDK aapt was not found under $sdk/build-tools"
+            find "$sdk/build-tools" -maxdepth 2 -type f -name 'aapt*' -print
+            exit 1
+          fi
+          badging="$("$aapt" dump badging "$apk")"
+          application_id="$(printf '%s\n' "$badging" | sed -n "s/^package: name='\\([^']*\\)'.*/\\1/p" | head -n 1)"
+          expected_id="com.tomastharwat.nintendo_nes"
+          if [ "$application_id" != "$expected_id" ]; then
+            echo "Unexpected APK package ID: '$application_id' (expected '$expected_id')"
+            exit 1
+          fi
+          printf 'Verified application ID: %s\n' "$application_id"
+          echo "Merged APK permissions:"
+          "$aapt" dump permissions "$apk"
           ls -lh "$apk"
       - name: Upload release APK
         uses: actions/upload-artifact@v4
