@@ -42,7 +42,7 @@ jobs:
           permission = '<uses-permission android:name="android.permission.INTERNET" />'
           if permission not in content:
               content = re.sub(r'(<manifest\b[^>]*>)', r'\1\n    ' + permission, content, count=1)
-          content, count = re.subn(r'(android:label=")[^"]+(")', r'\1@string/app_name\2', content, count=1)
+          content, count = re.subn(r'(android:label=")[^"]+(")', r'\1${appName}\2', content, count=1)
           if count != 1:
               raise SystemExit("Could not make the launcher label flavor-specific.")
           if 'android.permission.INTERNET' not in content:
@@ -58,12 +58,12 @@ jobs:
                   create("receiver") {
                       dimension = "role"
                       applicationId = "com.tomastharwat.nintendo_nes"
-                      resValue("string", "app_name", "Nintendo NES Receiver")
+                      manifestPlaceholders["appName"] = "Nintendo NES Receiver"
                   }
                   create("controller") {
                       dimension = "role"
                       applicationId = "com.tomastharwat.nes_controller"
-                      resValue("string", "app_name", "NES Wi-Fi Controller")
+                      manifestPlaceholders["appName"] = "NES Wi-Fi Controller"
                   }
               }
 
