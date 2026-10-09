@@ -1,38 +1,41 @@
-# Nintendo NES
+# Nintendo NES / Famicom for Android
 
-A dedicated Android emulator project for the Nintendo Entertainment System (NES) / Famicom. This project is intentionally separate from WifiPad and is focused on one console rather than a universal multi-system interface.
+An independent Flutter + Dart NES/Famicom emulator project. It is separate from WiFiPad. Commercial game ROMs, copyrighted assets, BIOS files, telemetry, analytics, accounts, cloud services, and relays are not bundled or required.
 
-## Project goals
+## Current milestone
 
-- Load locally supplied NES game images (`.nes`) in supported iNES and NES 2.0 formats.
-- Implement and test the NES CPU (Ricoh 2A03 / 6502 family), memory map, PPU graphics pipeline, and APU audio path.
-- Provide accurate NES controller input, including D-pad, **A**, **B**, **Select**, and **Start**. Start/Select must generate distinct, reliable press and release events.
-- Render gameplay smoothly and keep emulation timing independent from UI rendering.
-- Support save data where the cartridge uses battery-backed memory, and add save states only after deterministic state capture is reliable.
-- Keep the emulator core isolated from the Android UI so CPU, memory, cartridge, graphics, audio, and controller behavior can be tested independently.
+This repository began as a README-only scaffold. The feature branch adds:
+- iNES/NES 2.0 header parsing with malformed/truncated-file validation.
+- NROM (mapper 0) PRG mapping and CPU-visible memory/controller bus.
+- The 151 official 6502/Ricoh 2A03 opcodes, flags, instruction-level cycles, page-cross and branch penalties, interrupt entry points, and indirect-JMP wrap behavior. Bus-cycle timing and undocumented opcodes are not implemented.
+- NES controller serial strobe/read behavior with simultaneous buttons.
+- .nes file import and a pure-black Flutter UI.
+- Local Wi-Fi host/controller using a session pairing code, HMAC challenge-response and signed inputs, a 1 KiB frame cap, monotonic sequence checks, heartbeat timeout, and button release on disconnect.
+- CPU/cartridge/controller/protocol tests and an Android arm64 CI build workflow.
 
-## Scope
+**Not playable yet.** PPU graphics, nametable/palette/sprite rendering, vblank/NMI timing integration, APU audio, and frame scheduling are missing. The app reports this rather than faking gameplay. NROM is the only executable mapper; other mapper IDs are rejected.
 
-This repository is for **NES/Famicom only**. It will not host PSP, PlayStation, SNES, Sega, or other console implementations. Those should be separate projects if needed.
+## Local Wi-Fi controller
 
-No commercial game ROMs, copyrighted game assets, or proprietary BIOS files are included. Use game dumps you are legally entitled to use. This is an independent project and is not affiliated with or endorsed by Nintendo.
+On the emulator device choose **Host controller connection** and start the host. On the second device choose **Use this device as controller**, then enter the host's displayed IPv4 address and pairing code. Both devices must share the same local Wi-Fi; internet is not required.
 
-## Planned milestones
+The loopback integration test does not meet the acceptance criterion for two physical Android devices. This remains unverified until that manual test is actually performed. Read docs/WIFI_REMOTE.md for protocol limitations.
 
-1. Create the Android app shell and a testable emulator-core module.
-2. Implement cartridge parsing, mapper support, memory bus, and CPU instruction tests.
-3. Implement PPU rendering and frame timing; validate against public homebrew/test ROMs where their licenses permit.
-4. Implement APU audio and timing synchronization.
-5. Add touch controls and physical gamepad support; verify Start/Select and A/B on real games.
-6. Add game library management, save data, performance profiling, and release APK workflow.
+## Build locally
 
-## Current status
+Install Flutter stable, then run:
 
-**Repository scaffold only.** The emulator core, playable game loop, ROM browser, and APK build pipeline have not been implemented or verified yet. The milestones above are the work plan, not claims of completed features.
+    flutter create . --platforms=android --org=com.tomastharwat --project-name=nintendo_nes
 
-## Development principles
+Ensure android.permission.INTERNET is present in android/app/src/main/AndroidManifest.xml. Then run flutter pub get, dart format lib test, flutter analyze, flutter test, and flutter build apk --release --target-platform android-arm64.
 
-- Keep each change small, testable, and tied to a specific emulator subsystem.
-- Never bundle copyrighted ROMs in source code or CI artifacts.
-- Test input edge cases, especially short button taps and simultaneous inputs.
-- Read complete CI/build logs and address real errors and relevant warnings before calling a build complete.
+The release APK is a build artifact, not proof of playable NES compatibility.
+
+## Next milestones
+
+1. PPU registers/timing, background/sprite graphics, mirroring, palettes, and vblank/NMI.
+2. CPU/PPU frame scheduling and deterministic synchronization.
+3. APU channels/mixing/output without blocking the Flutter UI isolate.
+4. Licensed homebrew test ROM validation and additional mappers (MMC1, UxROM).
+5. Battery-backed saves, reliable save states, controller layout settings, and physical gamepads.
+6. Two-physical-device Wi-Fi testing; add transport encryption before use on untrusted LANs.

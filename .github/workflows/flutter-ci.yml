@@ -1,0 +1,89 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: ["main", "feat/**", "fix/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flutter-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Show toolchain
+        run: flutter --version
+      - name: Generate Android embedding files and local-network permission
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f android/app/src/main/AndroidManifest.xml ]; then
+            flutter create . --platforms=android --org=com.tomastharwat --project-name=nintendo_nes
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path("android/app/src/main/AndroidManifest.xml")
+          content = path.read_text()
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if permission not in content:
+              content = re.sub(r'(<manifest\b[^>]*>)', r'\1\n    ' + permission, content, count=1)
+              path.write_text(content)
+          if 'android.permission.INTERNET' not in content:
+              raise SystemExit("Missing INTERNET permission needed for local TCP.")
+          PY
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Format Dart source
+        run: dart format lib test
+      - name: Check whitespace errors
+        run: git diff --check
+      - name: Static analysis
+        run: flutter analyze --no-pub
+      - name: Unit and loopback tests
+        run: flutter test --no-pub --reporter expanded
+      - name: Build arm64 release APK
+        run: flutter build apk --release --target-platform android-arm64
+      - name: Inspect release APK ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="build/app/outputs/flutter-apk/app-release.apk"
+          test -s "$apk"
+          python3 - "$apk" <<'PY'
+          import sys, zipfile
+          apk_path = sys.argv[1]
+          with zipfile.ZipFile(apk_path) as archive:
+              names = archive.namelist()
+              native = sorted(n for n in names if n.startswith("lib/") and n.endswith(".so"))
+              assert native, "APK has no native shared libraries"
+              wrong = [n for n in native if not n.startswith("lib/arm64-v8a/")]
+              assert not wrong, f"Unexpected native ABIs: {wrong}"
+              assert any(n.startswith("lib/arm64-v8a/") for n in native), "Missing arm64-v8a libraries"
+              print("APK:", apk_path)
+              print("Native libraries:", len(native))
+              print("Native ABI inspection passed: arm64-v8a only")
+          PY
+          apkanalyzer manifest application-id "$apk" || true
+          ls -lh "$apk"
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: nintendo-nes-arm64-release
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
