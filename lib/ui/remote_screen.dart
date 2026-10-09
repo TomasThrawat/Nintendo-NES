@@ -17,7 +17,8 @@ class _RemoteScreenState extends State<RemoteScreen> {
   late final LocalControllerClient _client;
   final _hostInput=TextEditingController(),_codeInput=TextEditingController();
   final Set<NesButton> _pressed=<NesButton>{};
-  String _status='Not connected',? _pairCode;
+  String _status = 'Not connected';
+  String? _pairCode;
   List<String> _addresses=const <String>[];
   bool _busy=false;
 
