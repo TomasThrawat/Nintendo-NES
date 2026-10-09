@@ -1,0 +1,20 @@
+.dart_tool/
+.packages
+.pub/
+build/
+coverage/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+.idea/
+.vscode/
+*.iml
+android/local.properties
+android/.gradle/
+android/app/build/
+*.jks
+*.keystore
+# User-supplied game data must not be committed.
+*.nes
+*.sav
+*.state
