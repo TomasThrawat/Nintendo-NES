@@ -62,7 +62,9 @@ f0 BEQ rel 2 f1 SBC iy 5 f5 SBC zx 4 f6 INC zx 6 f8 SED imp 2 f9 SBC ay 4 fd SBC
   int step() {
     if (_nmi) { _nmi=false; _interrupt(0xfffa); totalCycles+=7; return 7; }
     if (_irq && !_flag(_i)) { _irq=false; _interrupt(0xfffe); totalCycles+=7; return 7; }
-    final at=pc, opcode=_byte(pc++);
+    final at=pc;
+    final opcode=_byte(pc);
+    pc=(pc+1)&0xffff;
     final op=_ops[opcode];
     if (op==null) {
       throw UnsupportedError('Unsupported unofficial opcode 0x${opcode.toRadixString(16)} at 0x${at.toRadixString(16)}.');
