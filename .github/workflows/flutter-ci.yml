@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7.0.1
       - name: Install Flutter stable
         uses: subosito/flutter-action@v2
         with:
@@ -98,7 +98,7 @@ jobs:
           "$aapt" dump permissions "$apk"
           ls -lh "$apk"
       - name: Upload release APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: nintendo-nes-arm64-release
           path: build/app/outputs/flutter-apk/app-release.apk
