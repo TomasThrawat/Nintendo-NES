@@ -1,41 +1,49 @@
 # Nintendo NES / Famicom for Android
 
-An independent Flutter + Dart NES/Famicom emulator project. It is separate from WiFiPad. Commercial game ROMs, copyrighted assets, BIOS files, telemetry, analytics, accounts, cloud services, and relays are not bundled or required.
+An independent Flutter + Dart NES/Famicom emulator project, separate from WiFiPad. No commercial ROMs, copyrighted assets, telemetry, analytics, accounts, cloud services, or relays are bundled or required.
 
-## Current milestone
+## Two-app layout
 
-This repository began as a README-only scaffold. The feature branch uses Flutter's maintained `file_selector` plugin for ROM selection and adds:
-- iNES/NES 2.0 header parsing with malformed/truncated-file validation.
+- **Nintendo NES Receiver** runs on the device hosting the emulator. It imports a legally obtained .nes ROM and opens the receiver page, which shows the IPv4 address, TCP port, pairing code, connection state, and accepted input-frame count.
+- **NES Wi-Fi Controller** is a separate, controller-only app for the second device. Its UI contains only the receiver address/code form and the NES D-pad, A, B, Start, and Select controls. It does not offer a receiver mode or generic gamepad layout.
+
+The role split follows the receiver/controller workflow used by WiFiPad, but the NES receiver does not use Shizuku or system-wide uinput injection. It routes authenticated button state directly to the emulator's NES controller port. Unlike WiFiPad's open UDP packet format, the NES connection uses a temporary pairing code, HMAC challenge-response, and signed input frames.
+
+## Current emulator milestone
+
+- iNES/NES 2.0 header parsing and malformed/truncated-file validation.
 - NROM (mapper 0) PRG mapping and CPU-visible memory/controller bus.
 - The 151 official 6502/Ricoh 2A03 opcodes, flags, instruction-level cycles, page-cross and branch penalties, interrupt entry points, and indirect-JMP wrap behavior. Bus-cycle timing and undocumented opcodes are not implemented.
-- NES controller serial strobe/read behavior with simultaneous buttons.
-- .nes file import and a pure-black Flutter UI.
-- Local Wi-Fi host/controller using a session pairing code, HMAC challenge-response and signed inputs, a 1 KiB frame cap, monotonic sequence checks, heartbeat timeout, and button release on disconnect.
-- CPU/cartridge/controller/protocol tests and an Android arm64 CI build workflow.
+- NES controller serial strobe/read behavior with simultaneous button presses.
+- .nes file picker through Flutter's maintained `file_selector` plugin.
+- Pure-black Flutter UI for the receiver and dedicated controller.
+- Local Wi-Fi TCP receiver/controller with a one-session pairing code, HMAC challenge-response and signed input, 1 KiB frame cap, monotonic sequence checks, heartbeat timeout, and automatic button release on disconnect.
+- Tests for CPU/cartridge/controller/protocol behavior, host/client loopback integration, and both Flutter entry-point screens.
 
-**Not playable yet.** PPU graphics, nametable/palette/sprite rendering, vblank/NMI timing integration, APU audio, and frame scheduling are missing. The app reports this rather than faking gameplay. NROM is the only executable mapper; other mapper IDs are rejected.
+**Not playable yet.** PPU graphics, nametable/palette/sprite rendering, vblank/NMI timing integration, APU audio, and frame scheduling are missing. The app says this rather than faking a game screen. NROM is the only executable mapper; other mapper IDs are rejected.
 
-## Local Wi-Fi controller
+## Pairing on local Wi-Fi
 
-On the emulator device choose **Host controller connection** and start the host. On the second device choose **Use this device as controller**, then enter the host's displayed IPv4 address and pairing code. Both devices must share the same local Wi-Fi; internet is not required.
+1. Install **Nintendo NES Receiver** on the emulator device and open **NES Receiver**.
+2. Start the receiver. The screen displays the receiver IPv4 address and a one-session pairing code.
+3. Install **NES Wi-Fi Controller** on the second device, enter the receiver address and pairing code, then connect.
+4. Hold the NES buttons. The receiver displays connection status and a volatile input-frame count. Disconnect or stop the receiver to release all buttons.
 
-The loopback integration test does not meet the acceptance criterion for two physical Android devices. This remains unverified until that manual test is actually performed. Read docs/WIFI_REMOTE.md for protocol limitations.
+Both devices must share the same local Wi-Fi. Internet, user accounts, cloud relays, and Shizuku are not required. Input frames are authenticated but TCP payloads are not encrypted, so only use trusted local networks. The loopback integration test does not replace a two-physical-device test; real-device acceptance remains unverified.
 
-## Build locally
+## CI builds
 
-Install Flutter stable, then run:
+GitHub Actions builds and inspects two arm64-only APKs:
+- `app-receiver-release.apk` — package `com.tomastharwat.nintendo_nes`
+- `app-controller-release.apk` — package `com.tomastharwat.nes_controller`
 
-    flutter create . --platforms=android --org=com.tomastharwat --project-name=nintendo_nes
+The CI verifies both APKs' ABI, package ID, launcher label, and local-network permissions. Download both from the workflow artifact. A successful build is not proof of playable NES compatibility.
 
-Ensure android.permission.INTERNET is present in android/app/src/main/AndroidManifest.xml. Then run flutter pub get, dart format lib test, flutter analyze, flutter test, and flutter build apk --release --target-platform android-arm64.
-
-The release APK is a build artifact, not proof of playable NES compatibility.
-
-## Next milestones
+## Next emulator milestones
 
 1. PPU registers/timing, background/sprite graphics, mirroring, palettes, and vblank/NMI.
 2. CPU/PPU frame scheduling and deterministic synchronization.
-3. APU channels/mixing/output without blocking the Flutter UI isolate.
+3. APU channels/mixing/output without blocking Flutter's UI isolate.
 4. Licensed homebrew test ROM validation and additional mappers (MMC1, UxROM).
-5. Battery-backed saves, reliable save states, controller layout settings, and physical gamepads.
-6. Two-physical-device Wi-Fi testing; add transport encryption before use on untrusted LANs.
+5. Battery-backed saves, reliable save states, configurable controls, and physical gamepads.
+6. Test the two dedicated apps on two physical Android devices.
