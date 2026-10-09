@@ -4,7 +4,7 @@ An independent Flutter + Dart NES/Famicom emulator project. It is separate from 
 
 ## Current milestone
 
-This repository began as a README-only scaffold. The feature branch adds:
+This repository began as a README-only scaffold. The feature branch uses Flutter's maintained `file_selector` plugin for ROM selection and adds:
 - iNES/NES 2.0 header parsing with malformed/truncated-file validation.
 - NROM (mapper 0) PRG mapping and CPU-visible memory/controller bus.
 - The 151 official 6502/Ricoh 2A03 opcodes, flags, instruction-level cycles, page-cross and branch penalties, interrupt entry points, and indirect-JMP wrap behavior. Bus-cycle timing and undocumented opcodes are not implemented.

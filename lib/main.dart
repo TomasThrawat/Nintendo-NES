@@ -1,5 +1,5 @@
 import 'dart:typed_data';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'core/cartridge/ines_rom.dart';
 import 'core/emulator.dart';
@@ -29,12 +29,11 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _importRom() async {
     setState(()=>_loading=true);
     try {
-      final result=await FilePicker.platform.pickFiles(type:FileType.custom,
-        allowedExtensions:const ['nes'],withData:true,allowMultiple:false);
-      if(result==null||result.files.isEmpty) { return; }
-      final file=result.files.single,bytes=file.bytes;
-      if(bytes==null) { throw const RomFormatException('Could not read the selected ROM file.'); }
-      _emulator.loadRom(Uint8List.fromList(bytes));
+      const romType = XTypeGroup(label: 'NES ROM', extensions: <String>['nes']);
+      final file = await openFile(acceptedTypeGroups: <XTypeGroup>[romType]);
+      if(file==null) { return; }
+      final Uint8List bytes = await file.readAsBytes();
+      _emulator.loadRom(bytes);
       if(!mounted) { return; }
       setState(() {
         _romName=file.name;
@@ -85,7 +84,7 @@ class _HomeScreenState extends State<HomeScreen> {
           label:const Text('Use this device as controller'),style:_outline()),
         const SizedBox(height:24),const Divider(color:Colors.white24),
         const Text('Implemented: iNES/NES 2.0 header parsing, NROM mapping, official 6502 instruction core, controller serial input, and authenticated local Wi-Fi input transport. Not implemented: PPU rendering, APU audio, frame timing, battery save persistence, and save states.',
-          style:TextStyle(color:Colors.white54,height:1.45)),
+          style:const TextStyle(color:Colors.white54,height:1.45)),
       ])));
   }
   ButtonStyle _outline()=>OutlinedButton.styleFrom(foregroundColor:Colors.white,
