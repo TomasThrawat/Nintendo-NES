@@ -15,6 +15,7 @@ void main() {
     final updates = Completer<void>();
     final released = Completer<void>();
     final disconnected = Completer<void>();
+    final inputCounts = <int>[];
     final seen = <Set<NesButton>>[];
     final host = LocalControllerServer(
       port: 0,
@@ -34,6 +35,7 @@ void main() {
           disconnected.complete();
         }
       },
+      onInputCountChanged: inputCounts.add,
     );
     final client = LocalControllerClient();
     try {
@@ -49,6 +51,8 @@ void main() {
       await updates.future.timeout(const Duration(seconds: 3));
       expect(host.isConnected, isTrue);
       expect(seen.last, containsAll(const {NesButton.a, NesButton.right}));
+      expect(host.inputsReceived, greaterThan(0));
+      expect(inputCounts.last, host.inputsReceived);
 
       await client.disconnect();
       await released.future.timeout(const Duration(seconds: 3));

@@ -10,12 +10,14 @@ class LocalControllerServer {
   LocalControllerServer({
     required this.onButtonsChanged,
     required this.onStatusChanged,
+    this.onInputCountChanged,
     this.port = 47531,
   });
 
   final int port;
   final void Function(Set<NesButton>) onButtonsChanged;
   final void Function(String) onStatusChanged;
+  final void Function(int)? onInputCountChanged;
   ServerSocket? _server;
   Socket? _client;
   JsonLineBuffer? _buffer;
@@ -27,6 +29,7 @@ class LocalControllerServer {
   bool _authenticated = false;
   int _badAttempts = 0;
   int _lastSequence = -1;
+  int _inputsReceived = 0;
   DateTime _lastFrame = DateTime.now();
   List<String> addresses = const <String>[];
 
@@ -34,6 +37,7 @@ class LocalControllerServer {
   bool get isConnected => _authenticated;
   String? get pairingCode => _pairCode;
   int get boundPort => _server?.port ?? port;
+  int get inputsReceived => _inputsReceived;
 
   Future<void> start() async {
     if (_server != null) {
@@ -41,6 +45,8 @@ class LocalControllerServer {
     }
     _pairCode = newPairingCode();
     _badAttempts = 0;
+    _inputsReceived = 0;
+    onInputCountChanged?.call(0);
     try {
       _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
       _server!.listen(
@@ -71,6 +77,8 @@ class LocalControllerServer {
     _handshakeTimeout?.cancel();
     _handshakeTimeout = null;
     addresses = const <String>[];
+    _inputsReceived = 0;
+    onInputCountChanged?.call(0);
     onButtonsChanged(const <NesButton>{});
     onStatusChanged('Stopped');
   }
@@ -217,6 +225,8 @@ class LocalControllerServer {
     }
     _lastSequence = sequence;
     _lastFrame = DateTime.now();
+    _inputsReceived++;
+    onInputCountChanged?.call(_inputsReceived);
     onButtonsChanged(NesController.buttonsFromMask(mask));
   }
 
@@ -245,6 +255,12 @@ class LocalControllerServer {
     } on SocketException {
       socket.destroy();
     }
+  }
+
+  /// Re-scan active interfaces after a Wi-Fi switch without stopping the listener.
+  Future<List<String>> refreshAddresses() async {
+    addresses = await _localIpv4Addresses();
+    return addresses;
   }
 
   Future<List<String>> _localIpv4Addresses() async {
