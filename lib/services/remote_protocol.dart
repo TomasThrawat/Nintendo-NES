@@ -25,7 +25,17 @@ bool constantTimeEquals(String a,String b) {
   }
   return diff==0;
 }
-bool isProtocolNonce(Object? v)=>v is String&&RegExp(r'^[0-9a-f]{32}$').hasMatch(v);
+bool isProtocolNonce(Object? value) =>
+    value is String &&
+    value.length == 32 &&
+    value.codeUnits.every((code) =>
+        (code >= 48 && code <= 57) || (code >= 97 && code <= 102));
+
+bool isHexSha256(Object? value) =>
+    value is String &&
+    value.length == 64 &&
+    value.codeUnits.every((code) =>
+        (code >= 48 && code <= 57) || (code >= 97 && code <= 102));
 String normalizedPairingCode(String v)=>v.trim().toUpperCase();
 bool isPairingCode(String v)=>v.length==16&&v.split('').every(_alphabet.contains);
 int parseButtonMask(Object? v) {

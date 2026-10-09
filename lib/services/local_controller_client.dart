@@ -95,8 +95,8 @@ class LocalControllerClient {
           break;
         case 'accepted':
           final hostNonce=_hostNonce,clientNonce=_clientNonce,key=_sessionKey,proof=data['proof'];
-          if(hostNonce==null||clientNonce==null||key==null||proof is! String||
-            !constantTimeEquals(proof,protocolMac(key,'server|$hostNonce|$clientNonce'))) {
+          if(hostNonce==null||clientNonce==null||key==null||!isHexSha256(proof)||
+            !constantTimeEquals(proof as String,protocolMac(key,'server|$hostNonce|$clientNonce'))) {
             _fail(const FormatException('Host authentication failed'));return;
           }
           _authenticated=true;_sequence=0;_notify('Connected');
