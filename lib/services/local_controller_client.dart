@@ -45,13 +45,39 @@ class LocalControllerClient {
   }
 
   Future<void> disconnect() async {
-    _closing=true;_heartbeat?.cancel();_heartbeat=null;
-    final socket=_socket;
-    if(socket!=null&&_authenticated){_mask=0;_sendInput();}
-    _authenticated=false;_socket=null;_buffer?.close();_buffer=null;
-    _sessionKey=null;_hostNonce=null;_clientNonce=null;_mask=0;
-    socket?.destroy();_onButtons?.call(const <NesButton>{});
-    _notify('Disconnected');_closing=false;
+    _closing = true;
+    _heartbeat?.cancel();
+    _heartbeat = null;
+    final socket = _socket;
+    if (socket != null && _authenticated) {
+      // Send a final all-buttons-up frame and flush it before closing the
+      // outgoing stream. Destroying immediately can drop the release frame.
+      _mask = 0;
+      _sendInput();
+      try {
+        await socket.flush();
+      } on SocketException {
+        // Continue with shutdown; the host watchdog still releases input.
+      }
+    }
+    _authenticated = false;
+    _socket = null;
+    _buffer?.close();
+    _buffer = null;
+    _sessionKey = null;
+    _hostNonce = null;
+    _clientNonce = null;
+    _mask = 0;
+    if (socket != null) {
+      try {
+        await socket.close();
+      } on SocketException {
+        socket.destroy();
+      }
+    }
+    _onButtons?.call(const <NesButton>{});
+    _notify('Disconnected');
+    _closing = false;
   }
 
   void _handleLine(String line) {
