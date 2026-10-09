@@ -40,8 +40,8 @@ class _HomeScreenState extends State<HomeScreen> {
         _romName=file.name;
         _message='ROM header validated and CPU reset completed. Complete gameplay is not available yet: the PPU renderer, APU audio, and frame scheduler are not implemented.';
       });
-    } on Object catch(e) {if(mounted)setState(()=>_message=e.toString());}
-    finally {if(mounted)setState(()=>_loading=false);}
+    } on Object catch(e) { if(mounted) { setState(()=>_message=e.toString()); } }
+    finally { if(mounted) { setState(()=>_loading=false); } }
   }
 
   void _openRemote(RemoteMode mode)=>Navigator.of(context).push(MaterialPageRoute<void>(

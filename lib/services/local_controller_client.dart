@@ -41,7 +41,7 @@ class LocalControllerClient {
   }
 
   void setButtons(Iterable<NesButton> buttons) {
-    _mask=NesController.maskFor(buttons);if(_authenticated)_sendInput();
+    _mask=NesController.maskFor(buttons); if(_authenticated) { _sendInput(); }
   }
 
   Future<void> disconnect() async {
@@ -74,7 +74,7 @@ class LocalControllerClient {
             _fail(const FormatException('Host authentication failed'));return;
           }
           _authenticated=true;_sequence=0;_notify('Connected');
-          final h=_handshake;if(h!=null&&!h.isCompleted)h.complete();
+          final h=_handshake; if(h!=null&&!h.isCompleted) { h.complete(); }
           break;
         case 'error': _fail(StateError('Pairing rejected or host is busy'));break;
         default: _fail(const FormatException('Unknown host message'));
@@ -84,18 +84,18 @@ class LocalControllerClient {
   }
 
   void _sendInput() {
-    final key=_sessionKey;if(!_authenticated||key==null)return;
+    final key=_sessionKey; if(!_authenticated||key==null) { return; }
     final sequence=++_sequence,mask=_mask;
     _send({'type':'input','sequence':sequence,'mask':mask,'mac':protocolMac(key,'input|$sequence|$mask')});
   }
   void _send(Map<String,Object> data) {
-    final socket=_socket;if(socket==null)return;
+    final socket=_socket; if(socket==null) { return; }
     try {socket.add(utf8.encode('${jsonEncode(data)}\n'));}
     on SocketException {_closed(socket);}
   }
   void _fail(Object error) {
-    final h=_handshake;if(h!=null&&!h.isCompleted)h.completeError(error);
-    final socket=_socket;if(socket!=null)_closed(socket);
+    final h=_handshake; if(h!=null&&!h.isCompleted) { h.completeError(error); }
+    final socket=_socket; if(socket!=null) { _closed(socket); }
   }
   void _closed(Socket socket) {
     if(!identical(socket,_socket)) { return; }

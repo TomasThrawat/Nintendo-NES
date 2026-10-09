@@ -16,9 +16,13 @@ String newProtocolNonce() {
 }
 String protocolMac(String key,String message)=>Hmac(sha256,utf8.encode(key)).convert(utf8.encode(message)).toString();
 bool constantTimeEquals(String a,String b) {
-  if(a.length!=b.length) { return false; }
+  if (a.length != b.length) {
+    return false;
+  }
   var diff=0;
-  for(var i=0;i<a.length;i++){diff|=a.codeUnitAt(i)^b.codeUnitAt(i);}
+  for (var i = 0; i < a.length; i++) {
+    diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+  }
   return diff==0;
 }
 bool isProtocolNonce(Object? v)=>v is String&&RegExp(r'^[0-9a-f]{32}$').hasMatch(v);
@@ -42,10 +46,14 @@ class JsonLineBuffer {
   final List<int> _pending=<int>[];
   bool _closed=false;
   void add(List<int> bytes) {
-    if(_closed) { return; }
+    if (_closed) {
+      return;
+    }
     for(final byte in bytes) {
       if(byte==10) {
-        if(_pending.isNotEmpty&&_pending.last==13) { _pending.removeLast(); }
+        if (_pending.isNotEmpty && _pending.last == 13) {
+          _pending.removeLast();
+        }
         try {
           final line=utf8.decode(_pending,allowMalformed:false);
           _pending.clear(); onLine(line);

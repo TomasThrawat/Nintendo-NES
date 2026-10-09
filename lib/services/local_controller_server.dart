@@ -41,7 +41,7 @@ class LocalControllerServer {
 
   Future<void> stop() async {
     final server=_server; _server=null; _pairCode=null; await server?.close();
-    final client=_client;if(client!=null)_drop(client,status:'Stopped');
+    final client=_client; if(client!=null) { _drop(client,status:'Stopped'); }
     _watchdog?.cancel();_watchdog=null;
     _handshakeTimeout?.cancel();_handshakeTimeout=null;
     addresses=const <String>[];
@@ -69,8 +69,8 @@ class LocalControllerServer {
     if(!identical(socket,_client)||line.isEmpty) { return; }
     try {
       final data=jsonDecode(line);
-      if(data is! Map<String,dynamic>){_drop(socket,status:'Invalid controller message');return;}
-      if(!_authenticated){_authenticate(socket,data);}else{_acceptInput(socket,data);}
+      if(data is! Map<String,dynamic>) { _drop(socket,status:'Invalid controller message'); return; }
+      if(!_authenticated) { _authenticate(socket,data); } else { _acceptInput(socket,data); }
     } on FormatException {_drop(socket,status:'Invalid controller message');}
     on TypeError {_drop(socket,status:'Invalid controller message');}
   }
@@ -101,9 +101,52 @@ class LocalControllerServer {
 
   void _acceptInput(Socket socket,Map<String,dynamic> data) {
     final key=_sessionKey;
-    if(data['type']!='input'||key==null){_drop(socket,status:'Invalid controller message');return;}
+    if(data['type']!='input'||key==null) { _drop(socket,status:'Invalid controller message'); return; }
     final sequence=parseSequence(data['sequence']),mask=parseButtonMask(data['mask']),mac=data['mac'];
-    if(mac is! String||!RegExp(r'^[0-9a-f]{64}$').hasMatch(mac)) {
+    if(mac is! String||!RegExp(r'^[0-9a-f]{64}
+      _drop(socket,status:'Invalid controller message');return;
+    }
+    if(!constantTimeEquals(mac,protocolMac(key,'input|$sequence|$mask'))) {
+      _drop(socket,status:'Controller authentication failed');return;
+    }
+    if(sequence<=_lastSequence) { return; }
+    _lastSequence=sequence;_lastFrame=DateTime.now();
+    onButtonsChanged(NesController.buttonsFromMask(mask));
+  }
+
+  void _drop(Socket socket,{required String status}) {
+    if(identical(socket,_client)) {
+      _client=null;_buffer?.close();_buffer=null;
+      _handshakeTimeout?.cancel();_handshakeTimeout=null;_watchdog?.cancel();_watchdog=null;
+      _sessionKey=null;_hostNonce=null;_authenticated=false;_lastSequence=-1;
+      onButtonsChanged(const <NesButton>{});onStatusChanged(_server==null?'Stopped':status);
+    }
+    socket.destroy();
+  }
+
+  static void _send(Socket socket,Map<String,Object> message) {
+    try {socket.add(utf8.encode('${jsonEncode(message)}\n'));}
+    on SocketException {socket.destroy();}
+  }
+
+  Future<List<String>> _localIpv4Addresses() async {
+    try {
+      final interfaces=await NetworkInterface.list(type:InternetAddressType.IPv4,includeLoopback:false,includeLinkLocal:false);
+      final preferred=<String>[],fallback=<String>[];
+      for(final interface in interfaces) {
+        for(final address in interface.addresses) {
+          final ip=address.address;
+          if(address.isLoopback||ip.startsWith('169.254.')||ip=='0.0.0.0') { continue; }
+          fallback.add(ip);
+          final name=interface.name.toLowerCase();
+          if(name.contains('wlan')||name.contains('wifi')) { preferred.add(ip); }
+        }
+      }
+      return (preferred.isNotEmpty?preferred:fallback).toSet().toList()..sort();
+    } on SocketException {return const <String>[];}
+  }
+}
+).hasMatch(mac)) {
       _drop(socket,status:'Invalid controller message');return;
     }
     if(!constantTimeEquals(mac,protocolMac(key,'input|$sequence|$mask'))) {
