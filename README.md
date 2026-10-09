@@ -4,10 +4,10 @@ An independent Flutter + Dart NES/Famicom emulator project, separate from WiFiPa
 
 ## Two-app layout
 
-- **Nintendo NES Receiver** runs on the device hosting the emulator. It imports a legally obtained .nes ROM and opens the receiver page, which shows the IPv4 address, TCP port, pairing code, connection state, and accepted input-frame count.
-- **NES Wi-Fi Controller** is a separate, controller-only app for the second device. Its UI contains only the receiver address/code form and the NES D-pad, A, B, Start, and Select controls. It does not offer a receiver mode or generic gamepad layout.
+- **Nintendo NES Receiver** runs on the emulator device. It imports a legally obtained .nes ROM and opens the receiver page, displaying the IPv4 address, UDP port, pairing code, connection state, and accepted input-frame count.
+- **NES Wi-Fi Controller** is a separate controller-only app for the second device. Its UI contains only the receiver address/code form and NES D-pad, A, B, Start, and Select controls. It has no receiver mode or generic gamepad layout.
 
-The role split follows the receiver/controller workflow used by WiFiPad, but the NES receiver does not use Shizuku or system-wide uinput injection. It routes authenticated button state directly to the emulator's NES controller port. Unlike WiFiPad's open UDP packet format, the NES connection uses a temporary pairing code, HMAC challenge-response, and signed input frames.
+The connection follows WiFiPad's local Wi-Fi UDP model: the controller sends compact input datagrams at approximately 60 Hz to the receiver. The important difference is that the payload contains only the eight NES buttons and is routed directly to the emulator's in-process controller port, rather than injecting a general Android gamepad through Shizuku/uinput. A temporary pairing code and HMAC authenticate the datagrams.
 
 ## Current emulator milestone
 
@@ -17,19 +17,19 @@ The role split follows the receiver/controller workflow used by WiFiPad, but the
 - NES controller serial strobe/read behavior with simultaneous button presses.
 - .nes file picker through Flutter's maintained `file_selector` plugin.
 - Pure-black Flutter UI for the receiver and dedicated controller.
-- Local Wi-Fi TCP receiver/controller with a one-session pairing code, HMAC challenge-response and signed input, 1 KiB frame cap, monotonic sequence checks, heartbeat timeout, and automatic button release on disconnect.
-- Tests for CPU/cartridge/controller/protocol behavior, host/client loopback integration, and both Flutter entry-point screens.
+- UDP controller packets at ~60 Hz, temporary pairing code, HMAC-authenticated frames and acknowledgements, fixed-size payload validation, sequence/replay checks, receiver reachability acknowledgements, 750 ms failsafe, and button release on disconnect.
+- Unit tests for CPU/cartridge/controller/protocol behavior, UDP host/client loopback integration, and both Flutter app screens.
 
-**Not playable yet.** PPU graphics, nametable/palette/sprite rendering, vblank/NMI timing integration, APU audio, and frame scheduling are missing. The app says this rather than faking a game screen. NROM is the only executable mapper; other mapper IDs are rejected.
+**Not playable yet.** PPU graphics, nametable/palette/sprite rendering, vblank/NMI timing integration, APU audio, and frame scheduling are missing. The app reports that limitation rather than faking gameplay. NROM is the only executable mapper; other mapper IDs are rejected.
 
 ## Pairing on local Wi-Fi
 
 1. Install **Nintendo NES Receiver** on the emulator device and open **NES Receiver**.
-2. Start the receiver. The screen displays the receiver IPv4 address and a one-session pairing code.
+2. Start the receiver. The screen displays its IPv4 address, UDP port, and one-session pairing code.
 3. Install **NES Wi-Fi Controller** on the second device, enter the receiver address and pairing code, then connect.
-4. Hold the NES buttons. The receiver displays connection status and a volatile input-frame count. Disconnect or stop the receiver to release all buttons.
+4. Hold the NES buttons. The receiver displays connection state and a non-persistent input-frame counter. Disconnect or stop the receiver to release all buttons.
 
-Both devices must share the same local Wi-Fi. Internet, user accounts, cloud relays, and Shizuku are not required. Input frames are authenticated but TCP payloads are not encrypted, so only use trusted local networks. The loopback integration test does not replace a two-physical-device test; real-device acceptance remains unverified.
+Both devices must share local Wi-Fi. Internet, accounts, cloud relays, and Shizuku are not required. HMAC protects integrity but the payload is not encrypted, so use a trusted local network. The loopback integration test does not replace the required test on two physical Android devices.
 
 ## CI builds
 
@@ -37,7 +37,7 @@ GitHub Actions builds and inspects two arm64-only APKs:
 - `app-receiver-release.apk` — package `com.tomastharwat.nintendo_nes`
 - `app-controller-release.apk` — package `com.tomastharwat.nes_controller`
 
-The CI verifies both APKs' ABI, package ID, launcher label, and local-network permissions. Download both from the workflow artifact. A successful build is not proof of playable NES compatibility.
+The CI verifies both APKs' ABI, package ID, launcher label, and local-network permissions. Download both from the workflow artifact. Successful build output is not proof of playable NES compatibility.
 
 ## Next emulator milestones
 

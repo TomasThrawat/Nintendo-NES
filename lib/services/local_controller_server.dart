@@ -1,263 +1,185 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
 
 import '../core/controller/nes_controller.dart';
 import 'remote_protocol.dart';
 
-/// Single-controller local TCP host. No input history or network logs are stored.
+/// WiFiPad-style UDP receiver: accepts fixed-size, authenticated NES input
+/// packets at approximately 60 Hz and routes them into the NES controller port.
 class LocalControllerServer {
   LocalControllerServer({
     required this.onButtonsChanged,
     required this.onStatusChanged,
     this.onInputCountChanged,
-    this.port = 47531,
+    this.port = nesWifiPort,
   });
 
   final int port;
   final void Function(Set<NesButton>) onButtonsChanged;
   final void Function(String) onStatusChanged;
   final void Function(int)? onInputCountChanged;
-  ServerSocket? _server;
-  Socket? _client;
-  JsonLineBuffer? _buffer;
-  Timer? _handshakeTimeout;
+
+  RawDatagramSocket? _socket;
   Timer? _watchdog;
   String? _pairCode;
-  String? _hostNonce;
-  String? _sessionKey;
-  bool _authenticated = false;
-  int _badAttempts = 0;
+  InternetAddress? _peerAddress;
+  int? _peerPort;
   int _lastSequence = -1;
   int _inputsReceived = 0;
-  DateTime _lastFrame = DateTime.now();
+  DateTime _lastFrame = DateTime.fromMillisecondsSinceEpoch(0);
   List<String> addresses = const <String>[];
 
-  bool get isListening => _server != null;
-  bool get isConnected => _authenticated;
+  static const Duration _failsafeTimeout = Duration(milliseconds: 750);
+
+  bool get isListening => _socket != null;
+  bool get isConnected => _peerAddress != null;
   String? get pairingCode => _pairCode;
-  int get boundPort => _server?.port ?? port;
+  int get boundPort => _socket?.port ?? port;
   int get inputsReceived => _inputsReceived;
 
   Future<void> start() async {
-    if (_server != null) {
+    if (_socket != null) {
       return;
     }
     _pairCode = newPairingCode();
-    _badAttempts = 0;
     _inputsReceived = 0;
+    _lastSequence = -1;
     onInputCountChanged?.call(0);
     try {
-      _server = await ServerSocket.bind(InternetAddress.anyIPv4, port);
-      _server!.listen(
-        _accept,
-        onError: (Object _) => onStatusChanged('Local network listener failed.'),
+      final socket = await RawDatagramSocket.bind(
+        InternetAddress.anyIPv4,
+        port,
+        reuseAddress: true,
+      );
+      _socket = socket;
+      socket.readEventsEnabled = true;
+      socket.writeEventsEnabled = false;
+      socket.listen(
+        (event) {
+          if (event == RawSocketEvent.read) {
+            _receivePending();
+          }
+        },
+        onError: (Object _) {
+          onStatusChanged('Local Wi-Fi receiver error');
+        },
+        onDone: () {
+          if (_socket != null) {
+            _dropPeer(status: 'Receiver stopped');
+          }
+        },
+        cancelOnError: true,
       );
       addresses = await _localIpv4Addresses();
-      onStatusChanged('Waiting for controller pairing');
+      _watchdog?.cancel();
+      _watchdog = Timer.periodic(
+        const Duration(milliseconds: 250),
+        (_) => _checkTimeout(),
+      );
+      onStatusChanged('Waiting for NES controller');
     } on SocketException {
-      _server = null;
+      _socket?.close();
+      _socket = null;
       _pairCode = null;
-      onStatusChanged('Could not open the local Wi-Fi port.');
+      onStatusChanged('Could not open the local Wi-Fi UDP port.');
       rethrow;
     }
   }
 
   Future<void> stop() async {
-    final server = _server;
-    _server = null;
-    _pairCode = null;
-    await server?.close();
-    final client = _client;
-    if (client != null) {
-      _drop(client, status: 'Stopped');
-    }
     _watchdog?.cancel();
     _watchdog = null;
-    _handshakeTimeout?.cancel();
-    _handshakeTimeout = null;
+    _dropPeer(status: 'Receiver stopped');
+    _socket?.close();
+    _socket = null;
+    _pairCode = null;
     addresses = const <String>[];
     _inputsReceived = 0;
+    _lastSequence = -1;
     onInputCountChanged?.call(0);
     onButtonsChanged(const <NesButton>{});
     onStatusChanged('Stopped');
   }
 
-  void _accept(Socket socket) {
-    if (_client != null || _badAttempts >= 5 || _pairCode == null) {
-      _send(socket, <String, Object>{'type': 'error', 'reason': 'busy'});
-      socket.destroy();
+  void _receivePending() {
+    final socket = _socket;
+    if (socket == null) {
       return;
     }
-    _client = socket;
-    _authenticated = false;
-    _sessionKey = null;
-    _lastSequence = -1;
-    _hostNonce = newProtocolNonce();
-    _lastFrame = DateTime.now();
-    _buffer = JsonLineBuffer(
-      onLine: (line) => _handleLine(socket, line),
-      onInvalidFrame: () => _drop(socket, status: 'Invalid controller frame'),
-    );
-    _send(socket, <String, Object>{
-      'type': 'challenge',
-      'nonce': _hostNonce!,
-      'protocol': 1,
-    });
-    _handshakeTimeout?.cancel();
-    _handshakeTimeout = Timer(
-      const Duration(seconds: 10),
-      () => _drop(socket, status: 'Pairing timed out'),
-    );
-    socket.listen(
-      (data) => _buffer?.add(data),
-      onError: (Object _) => _drop(socket, status: 'Controller disconnected'),
-      onDone: () => _drop(socket, status: 'Controller disconnected'),
-      cancelOnError: true,
-    );
-    onStatusChanged('Pairing request received');
-  }
-
-  void _handleLine(Socket socket, String line) {
-    if (!identical(socket, _client) || line.isEmpty) {
-      return;
-    }
-    try {
-      final decoded = jsonDecode(line);
-      if (decoded is! Map<String, dynamic>) {
-        _drop(socket, status: 'Invalid controller message');
+    while (true) {
+      final datagram = socket.receive();
+      if (datagram == null) {
         return;
       }
-      if (!_authenticated) {
-        _authenticate(socket, decoded);
-      } else {
-        _acceptInput(socket, decoded);
-      }
-    } on FormatException {
-      _drop(socket, status: 'Invalid controller message');
-    } on TypeError {
-      _drop(socket, status: 'Invalid controller message');
+      _handleDatagram(datagram);
     }
   }
 
-  void _authenticate(Socket socket, Map<String, dynamic> data) {
+  void _handleDatagram(Datagram datagram) {
     final code = _pairCode;
-    final hostNonce = _hostNonce;
-    final clientNonce = data['clientNonce'];
-    final proof = data['proof'];
-    if (data['type'] != 'auth' ||
-        code == null ||
-        hostNonce == null ||
-        !isProtocolNonce(clientNonce) ||
-        !isHexSha256(proof)) {
-      _badAttempts++;
-      _send(socket, <String, Object>{
-        'type': 'error',
-        'reason': 'pairing_failed',
-      });
-      _drop(socket, status: 'Pairing failed');
+    if (code == null ||
+        !isNesInputPacket(datagram.data) ||
+        !isValidNesDatagram(datagram.data, code)) {
       return;
     }
 
-    if (!constantTimeEquals(
-      proof as String,
-      protocolMac(code, 'client|$hostNonce|$clientNonce'),
-    )) {
-      _badAttempts++;
-      _send(socket, <String, Object>{
-        'type': 'error',
-        'reason': 'pairing_failed',
-      });
-      _drop(socket, status: 'Pairing failed');
-      return;
-    }
+    final sequence = readNesSequence(datagram.data);
+    final mask = readNesButtonMask(datagram.data);
+    final samePeer = _peerAddress?.address == datagram.address.address &&
+        _peerPort == datagram.port;
 
-    _sessionKey = protocolMac(code, 'session|$hostNonce|$clientNonce');
-    _authenticated = true;
-    _lastFrame = DateTime.now();
-    _lastSequence = -1;
-    _handshakeTimeout?.cancel();
-    _handshakeTimeout = null;
-    _send(socket, <String, Object>{
-      'type': 'accepted',
-      'proof': protocolMac(
-        _sessionKey!,
-        'server|$hostNonce|$clientNonce',
-      ),
-    });
-    onButtonsChanged(const <NesButton>{});
-    onStatusChanged('Controller connected');
-    _watchdog?.cancel();
-    _watchdog = Timer.periodic(const Duration(milliseconds: 500), (_) {
-      if (_authenticated &&
-          DateTime.now().difference(_lastFrame) >
-              const Duration(seconds: 2)) {
-        final active = _client;
-        if (active != null) {
-          _drop(active, status: 'Controller timed out');
-        }
+    if (_peerAddress != null && !samePeer) {
+      if (DateTime.now().difference(_lastFrame) <= _failsafeTimeout) {
+        return;
       }
-    });
-  }
+      _dropPeer(status: 'Controller disconnected');
+    }
 
-  void _acceptInput(Socket socket, Map<String, dynamic> data) {
-    final key = _sessionKey;
-    if (data['type'] != 'input' || key == null) {
-      _drop(socket, status: 'Invalid controller message');
+    if (_peerAddress == null) {
+      _peerAddress = datagram.address;
+      _peerPort = datagram.port;
+      _lastSequence = -1;
+      onButtonsChanged(const <NesButton>{});
+      onStatusChanged('Controller connected');
+    }
+
+    if (!isNewerNesSequence(sequence, _lastSequence)) {
       return;
     }
-    final sequence = parseSequence(data['sequence']);
-    final mask = parseButtonMask(data['mask']);
-    final mac = data['mac'];
-    if (!isHexSha256(mac)) {
-      _drop(socket, status: 'Invalid controller message');
-      return;
-    }
-    if (!constantTimeEquals(
-      mac as String,
-      protocolMac(key, 'input|$sequence|$mask'),
-    )) {
-      _drop(socket, status: 'Controller authentication failed');
-      return;
-    }
-    if (sequence <= _lastSequence) {
-      return;
-    }
+
     _lastSequence = sequence;
     _lastFrame = DateTime.now();
     _inputsReceived++;
     onInputCountChanged?.call(_inputsReceived);
     onButtonsChanged(NesController.buttonsFromMask(mask));
+
+    // A signed ACK allows the controller app to show real receiver reachability.
+    _socket?.send(
+      encodeNesAckPacket(sequence: sequence, pairingCode: code),
+      datagram.address,
+      datagram.port,
+    );
   }
 
-  void _drop(Socket socket, {required String status}) {
-    if (identical(socket, _client)) {
-      _client = null;
-      _buffer?.close();
-      _buffer = null;
-      _handshakeTimeout?.cancel();
-      _handshakeTimeout = null;
-      _watchdog?.cancel();
-      _watchdog = null;
-      _sessionKey = null;
-      _hostNonce = null;
-      _authenticated = false;
-      _lastSequence = -1;
-      onButtonsChanged(const <NesButton>{});
-      onStatusChanged(_server == null ? 'Stopped' : status);
-    }
-    socket.destroy();
-  }
-
-  static void _send(Socket socket, Map<String, Object> message) {
-    try {
-      socket.add(utf8.encode('${jsonEncode(message)}\n'));
-    } on SocketException {
-      socket.destroy();
+  void _checkTimeout() {
+    if (_peerAddress != null &&
+        DateTime.now().difference(_lastFrame) > _failsafeTimeout) {
+      _dropPeer(status: 'Controller disconnected');
     }
   }
 
-  /// Re-scan active interfaces after a Wi-Fi switch without stopping the listener.
+  void _dropPeer({required String status}) {
+    if (_peerAddress == null) {
+      return;
+    }
+    _peerAddress = null;
+    _peerPort = null;
+    _lastSequence = -1;
+    onButtonsChanged(const <NesButton>{});
+    onStatusChanged(status);
+  }
+
+  /// Refresh the displayed IPv4 list after changing the Wi-Fi network.
   Future<List<String>> refreshAddresses() async {
     addresses = await _localIpv4Addresses();
     return addresses;

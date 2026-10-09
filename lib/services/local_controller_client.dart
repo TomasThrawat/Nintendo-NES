@@ -1,137 +1,245 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
+
 import '../core/controller/nes_controller.dart';
 import 'remote_protocol.dart';
 
-/// Paired controller. Updates are sent immediately and signed keepalives every
-/// 200 ms detect link loss so the host can release stuck buttons.
+/// WiFiPad-style UDP sender with signed NES input updates at ~60 Hz.
 class LocalControllerClient {
-  Socket? _socket;
-  JsonLineBuffer? _buffer;
-  Timer? _heartbeat;
-  Completer<void>? _handshake;
+  RawDatagramSocket? _socket;
+  InternetAddress? _targetAddress;
+  Timer? _sendTimer;
+  Timer? _watchdog;
+  Completer<void>? _firstAck;
   void Function(String)? _onStatus;
   void Function(Set<NesButton>)? _onButtons;
-  String _code='';
-  String? _hostNonce,_clientNonce,_sessionKey;
-  int _sequence=0,_mask=0;
-  bool _authenticated=false,_closing=false;
-  bool get isConnected=>_authenticated;
+  String _code = '';
+  int _targetPort = nesWifiPort;
+  int _sequence = 0;
+  int _lastAckSequence = -1;
+  int _mask = 0;
+  bool _running = false;
+  bool _connected = false;
+  bool _closing = false;
+  String _status = 'Disconnected';
+  DateTime _lastAckAt = DateTime.fromMillisecondsSinceEpoch(0);
 
-  Future<void> connect({required String host,required String pairingCode,
+  bool get isConnected => _connected;
+
+  Future<void> connect({
+    required String host,
+    required String pairingCode,
     required void Function(Set<NesButton>) onButtonsChanged,
-    required void Function(String) onStatusChanged,int port=47531}) async {
+    required void Function(String) onStatusChanged,
+    int port = nesWifiPort,
+  }) async {
     await disconnect();
-    final code=normalizedPairingCode(pairingCode);
-    if(!isPairingCode(code)) { throw const FormatException('Enter the full 16-character pairing code.'); }
-    _code=code;_onButtons=onButtonsChanged;_onStatus=onStatusChanged;_closing=false;
-    _notify('Connecting to host');
-    final socket=await Socket.connect(host.trim(),port,timeout:const Duration(seconds:8));
-    _socket=socket;final handshake=Completer<void>();_handshake=handshake;
-    _buffer=JsonLineBuffer(onLine:_handleLine,onInvalidFrame:()=>_fail(const FormatException('Invalid host frame')));
-    socket.listen((data)=>_buffer?.add(data),onError:(Object _) => _closed(socket),
-      onDone:()=>_closed(socket),cancelOnError:true);
+    final code = normalizedPairingCode(pairingCode);
+    if (!isPairingCode(code)) {
+      throw const FormatException('Enter the full 16-character pairing code.');
+    }
+    final address = InternetAddress.tryParse(host.trim());
+    if (address == null || address.type != InternetAddressType.IPv4) {
+      throw const FormatException('Enter the receiver IPv4 address.');
+    }
+
+    _code = code;
+    _targetAddress = address;
+    _targetPort = port;
+    _onButtons = onButtonsChanged;
+    _onStatus = onStatusChanged;
+    _closing = false;
+    _connected = false;
+    _mask = 0;
+    _sequence = 0;
+    _lastAckSequence = -1;
+    _notify('Connecting to NES receiver');
+
+    final socket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      0,
+      reuseAddress: true,
+    );
+    _socket = socket;
+    socket.readEventsEnabled = true;
+    socket.writeEventsEnabled = false;
+    socket.listen(
+      (event) {
+        if (event == RawSocketEvent.read) {
+          _receiveAcks();
+        }
+      },
+      onError: (Object _) => _socketFailed(),
+      onDone: _socketFailed,
+      cancelOnError: true,
+    );
+
+    final firstAck = Completer<void>();
+    _firstAck = firstAck;
+    _running = true;
+    _sendInput();
+    _sendTimer = Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _sendInput(),
+    );
+    _watchdog = Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _checkAckTimeout(),
+    );
+
     try {
-      await handshake.future.timeout(const Duration(seconds:10));
-      _heartbeat?.cancel();
-      _heartbeat=Timer.periodic(const Duration(milliseconds:200),(_)=>_sendInput());
-      _sendInput();
-    } on Object {await disconnect();rethrow;}
+      await firstAck.future.timeout(
+        const Duration(seconds: 3),
+        onTimeout: () => throw const SocketException(
+          'No receiver response. Check both Wi-Fi devices, the IP address, and pairing code.',
+        ),
+      );
+    } on Object {
+      await disconnect();
+      rethrow;
+    }
   }
 
   void setButtons(Iterable<NesButton> buttons) {
-    _mask=NesController.maskFor(buttons); if(_authenticated) { _sendInput(); }
+    _mask = NesController.maskFor(buttons);
+    if (_running) {
+      _sendInput();
+    }
   }
 
   Future<void> disconnect() async {
     _closing = true;
-    _heartbeat?.cancel();
-    _heartbeat = null;
+    _sendTimer?.cancel();
+    _sendTimer = null;
+    _watchdog?.cancel();
+    _watchdog = null;
     final socket = _socket;
-    if (socket != null && _authenticated) {
-      // Send a final all-buttons-up frame and flush it before closing the
-      // outgoing stream. Destroying immediately can drop the release frame.
+    if (socket != null && _running) {
       _mask = 0;
-      _sendInput();
-      try {
-        await socket.flush();
-      } on SocketException {
-        // Continue with shutdown; the host watchdog still releases input.
+      // Several final all-buttons-up datagrams reduce the chance of a lost
+      // release packet. The receiver also has a 750 ms watchdog failsafe.
+      for (var i = 0; i < 3; i++) {
+        _sendInput();
       }
     }
-    _authenticated = false;
-    _socket = null;
-    _buffer?.close();
-    _buffer = null;
-    _sessionKey = null;
-    _hostNonce = null;
-    _clientNonce = null;
+    _running = false;
+    _connected = false;
     _mask = 0;
-    if (socket != null) {
-      try {
-        await socket.close();
-      } on SocketException {
-        socket.destroy();
-      }
-    }
+    _socket = null;
+    socket?.close();
+    _targetAddress = null;
+    _code = '';
+    _lastAckSequence = -1;
     _onButtons?.call(const <NesButton>{});
     _notify('Disconnected');
     _closing = false;
   }
 
-  void _handleLine(String line) {
+  void _sendInput() {
+    final socket = _socket;
+    final target = _targetAddress;
+    if (!_running || socket == null || target == null) {
+      return;
+    }
+    _sequence = (_sequence + 1) & 0xffffffff;
     try {
-      final data=jsonDecode(line);
-      if(data is! Map<String,dynamic>){_fail(const FormatException('Invalid host message'));return;}
-      switch(data['type']) {
-        case 'challenge':
-          final nonce=data['nonce'];
-          if(!isProtocolNonce(nonce)||_sessionKey!=null){_fail(const FormatException('Invalid host challenge'));return;}
-          _hostNonce=nonce as String;_clientNonce=newProtocolNonce();
-          _sessionKey=protocolMac(_code,'session|$_hostNonce|$_clientNonce');
-          _send({'type':'auth','clientNonce':_clientNonce!,
-            'proof':protocolMac(_code,'client|$_hostNonce|$_clientNonce')});
-          break;
-        case 'accepted':
-          final hostNonce=_hostNonce,clientNonce=_clientNonce,key=_sessionKey,proof=data['proof'];
-          if(hostNonce==null||clientNonce==null||key==null||!isHexSha256(proof)||
-            !constantTimeEquals(proof as String,protocolMac(key,'server|$hostNonce|$clientNonce'))) {
-            _fail(const FormatException('Host authentication failed'));return;
-          }
-          _authenticated=true;_sequence=0;_notify('Connected');
-          final h=_handshake; if(h!=null&&!h.isCompleted) { h.complete(); }
-          break;
-        case 'error': _fail(StateError('Pairing rejected or host is busy'));break;
-        default: _fail(const FormatException('Unknown host message'));
-      }
-    } on FormatException {_fail(const FormatException('Invalid host message'));}
-    on TypeError {_fail(const FormatException('Invalid host message'));}
+      socket.send(
+        encodeNesInputPacket(
+          sequence: _sequence,
+          mask: _mask,
+          pairingCode: _code,
+        ),
+        target,
+        _targetPort,
+      );
+    } on SocketException {
+      _socketFailed();
+    } on FormatException {
+      _socketFailed();
+    }
   }
 
-  void _sendInput() {
-    final key=_sessionKey; if(!_authenticated||key==null) { return; }
-    final sequence=++_sequence,mask=_mask;
-    _send({'type':'input','sequence':sequence,'mask':mask,'mac':protocolMac(key,'input|$sequence|$mask')});
+  void _receiveAcks() {
+    final socket = _socket;
+    final target = _targetAddress;
+    if (socket == null || target == null) {
+      return;
+    }
+    while (true) {
+      final datagram = socket.receive();
+      if (datagram == null) {
+        return;
+      }
+      if (datagram.address.address != target.address ||
+          datagram.port != _targetPort ||
+          !isNesAckPacket(datagram.data) ||
+          !isValidNesDatagram(datagram.data, _code)) {
+        continue;
+      }
+      final sequence = readNesSequence(datagram.data);
+      if (isNewerNesSequence(sequence, _sequence)) {
+        continue;
+      }
+      final age = (_sequence - sequence) & 0xffffffff;
+      if (age > 120) {
+        continue;
+      }
+      if (_lastAckSequence >= 0 &&
+          !isNewerNesSequence(sequence, _lastAckSequence)) {
+        continue;
+      }
+      _lastAckSequence = sequence;
+      _lastAckAt = DateTime.now();
+      if (!_connected) {
+        _connected = true;
+        _notify('Connected to NES receiver');
+      }
+      final firstAck = _firstAck;
+      if (firstAck != null && !firstAck.isCompleted) {
+        firstAck.complete();
+      }
+    }
   }
-  void _send(Map<String,Object> data) {
-    final socket=_socket; if(socket==null) { return; }
-    try {socket.add(utf8.encode('${jsonEncode(data)}\n'));}
-    on SocketException {_closed(socket);}
-  }
-  void _fail(Object error) {
-    final h=_handshake; if(h!=null&&!h.isCompleted) { h.completeError(error); }
-    final socket=_socket; if(socket!=null) { _closed(socket); }
-  }
-  void _closed(Socket socket) {
-    if(!identical(socket,_socket)) { return; }
-    _socket=null;_authenticated=false;_heartbeat?.cancel();_heartbeat=null;
-    _buffer?.close();_buffer=null;_sessionKey=null;_mask=0;
+
+  void _checkAckTimeout() {
+    if (!_running ||
+        !_connected ||
+        DateTime.now().difference(_lastAckAt) <
+            const Duration(milliseconds: 1500)) {
+      return;
+    }
+    _connected = false;
+    _mask = 0;
     _onButtons?.call(const <NesButton>{});
-    if(!_closing) { _notify('Host disconnected'); }
-    final h=_handshake;
-    if(h!=null&&!h.isCompleted) { h.completeError(const SocketException('Host disconnected during pairing.')); }
-    socket.destroy();
+    _notify('Receiver connection lost');
   }
-  void _notify(String value)=>_onStatus?.call(value);
+
+  void _socketFailed() {
+    if (_closing || !_running) {
+      return;
+    }
+    _running = false;
+    _connected = false;
+    _mask = 0;
+    _sendTimer?.cancel();
+    _sendTimer = null;
+    _watchdog?.cancel();
+    _watchdog = null;
+    _socket?.close();
+    _socket = null;
+    _onButtons?.call(const <NesButton>{});
+    _notify('Wi-Fi socket closed');
+    final firstAck = _firstAck;
+    if (firstAck != null && !firstAck.isCompleted) {
+      firstAck.completeError(const SocketException('Wi-Fi socket closed.'));
+    }
+  }
+
+  void _notify(String value) {
+    if (_status == value) {
+      return;
+    }
+    _status = value;
+    _onStatus?.call(value);
+  }
 }
