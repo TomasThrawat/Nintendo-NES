@@ -1,5 +1,5 @@
 name: nintendo_nes
-description: A Flutter and Dart NES/Famicom emulator core with an offline Wi-Fi controller.
+description: NES-style Wi-Fi gamepad controller with Android TV virtual gamepad receiver.
 publish_to: none
 version: 0.1.0+1
 
@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  file_selector: ^1.1.0
   shared_preferences: ^2.5.3
 
 dev_dependencies:

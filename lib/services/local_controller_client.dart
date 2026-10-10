@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
-import '../core/controller/nes_controller.dart';
-import 'remote_protocol.dart';
+import '../core/controller/gamepad_state.dart';
+import 'gamepad_protocol.dart';
 
-/// WiFiPad-style IP-only UDP sender for NES input updates at ~60 Hz.
+/// WiFiPad-style IP-only UDP sender for gamepad input updates at ~60 Hz.
 class LocalControllerClient {
   RawDatagramSocket? _socket;
   InternetAddress? _targetAddress;
@@ -12,8 +12,8 @@ class LocalControllerClient {
   Timer? _watchdog;
   Completer<void>? _firstAck;
   void Function(String)? _onStatus;
-  void Function(Set<NesButton>)? _onButtons;
-  int _targetPort = nesWifiPort;
+  void Function(Set<GamepadButton>)? _onButtons;
+  int _targetPort = gamepadWifiPort;
   int _sequence = 0;
   int _lastAckSequence = -1;
   int _mask = 0;
@@ -27,9 +27,9 @@ class LocalControllerClient {
 
   Future<void> connect({
     required String host,
-    required void Function(Set<NesButton>) onButtonsChanged,
+    required void Function(Set<GamepadButton>) onButtonsChanged,
     required void Function(String) onStatusChanged,
-    int port = nesWifiPort,
+    int port = gamepadWifiPort,
   }) async {
     await disconnect();
     final address = InternetAddress.tryParse(host.trim());
@@ -46,7 +46,7 @@ class LocalControllerClient {
     _mask = 0;
     _sequence = 0;
     _lastAckSequence = -1;
-    _notify('Connecting to NES receiver');
+    _notify('Connecting to gamepad receiver');
 
     final socket = await RawDatagramSocket.bind(
       InternetAddress.anyIPv4,
@@ -84,7 +84,7 @@ class LocalControllerClient {
       await firstAck.future.timeout(
         const Duration(seconds: 3),
         onTimeout: () => throw const SocketException(
-          'No receiver response. Check both devices are on the same Wi-Fi and verify the IP address.',
+          'No gamepad receiver response. Check both devices are on the same Wi-Fi and verify the IP address.',
         ),
       );
     } on Object {
@@ -93,8 +93,8 @@ class LocalControllerClient {
     }
   }
 
-  void setButtons(Iterable<NesButton> buttons) {
-    _mask = NesController.maskFor(buttons);
+  void setButtons(Iterable<GamepadButton> buttons) {
+    _mask = GamepadState.maskFor(buttons);
     if (_running) {
       _sendInput();
     }
@@ -122,7 +122,7 @@ class LocalControllerClient {
     socket?.close();
     _targetAddress = null;
     _lastAckSequence = -1;
-    _onButtons?.call(const <NesButton>{});
+    _onButtons?.call(const <GamepadButton>{});
     _notify('Disconnected');
     _closing = false;
   }
@@ -136,7 +136,7 @@ class LocalControllerClient {
     _sequence = (_sequence + 1) & 0xffffffff;
     try {
       socket.send(
-        encodeNesInputPacket(
+        encodeGamepadInputPacket(
           sequence: _sequence,
           mask: _mask,
         ),
@@ -163,12 +163,12 @@ class LocalControllerClient {
       }
       if (datagram.address.address != target.address ||
           datagram.port != _targetPort ||
-          !isNesAckPacket(datagram.data) ||
-          !isValidNesDatagram(datagram.data)) {
+          !isGamepadAckPacket(datagram.data) ||
+          !isValidGamepadPacket(datagram.data)) {
         continue;
       }
-      final sequence = readNesSequence(datagram.data);
-      if (isNewerNesSequence(sequence, _sequence)) {
+      final sequence = readGamepadSequence(datagram.data);
+      if (isNewerGamepadSequence(sequence, _sequence)) {
         continue;
       }
       final age = (_sequence - sequence) & 0xffffffff;
@@ -176,14 +176,14 @@ class LocalControllerClient {
         continue;
       }
       if (_lastAckSequence >= 0 &&
-          !isNewerNesSequence(sequence, _lastAckSequence)) {
+          !isNewerGamepadSequence(sequence, _lastAckSequence)) {
         continue;
       }
       _lastAckSequence = sequence;
       _lastAckAt = DateTime.now();
       if (!_connected) {
         _connected = true;
-        _notify('Connected to NES receiver');
+        _notify('Connected to gamepad receiver');
       }
       final firstAck = _firstAck;
       if (firstAck != null && !firstAck.isCompleted) {
@@ -201,7 +201,7 @@ class LocalControllerClient {
     }
     _connected = false;
     _mask = 0;
-    _onButtons?.call(const <NesButton>{});
+    _onButtons?.call(const <GamepadButton>{});
     _notify('Receiver connection lost');
   }
 
@@ -218,7 +218,7 @@ class LocalControllerClient {
     _watchdog = null;
     _socket?.close();
     _socket = null;
-    _onButtons?.call(const <NesButton>{});
+    _onButtons?.call(const <GamepadButton>{});
     _notify('Wi-Fi socket closed');
     final firstAck = _firstAck;
     if (firstAck != null && !firstAck.isCompleted) {

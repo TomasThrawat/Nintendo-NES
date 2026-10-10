@@ -206,6 +206,9 @@ jobs:
               raise SystemExit("Missing receiver/controller Android product flavors.")
           PY
 
+      - name: Generate Shizuku-backed virtual gamepad receiver bridge
+        run: python3 scripts/prepare_android_gamepad.py
+
       - name: Resolve dependencies without upgrading constraints
         run: flutter pub get
 

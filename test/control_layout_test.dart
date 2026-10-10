@@ -10,7 +10,7 @@ void main() {
 
   test('provides individual editable defaults for every NES button', () async {
     final placements = await ControlLayoutStore.load();
-    expect(placements.keys.toSet(), NesButton.values.toSet());
+    expect(placements.keys.toSet(), GamepadButton.values.toSet());
     expect(placements.values.every((p) => p.visible), isTrue);
     expect(placements.values.every((p) => p.scale == 1), isTrue);
   });
@@ -22,8 +22,8 @@ void main() {
       scale: 1.4,
       visible: false,
     );
-    await ControlLayoutStore.save(NesButton.a, placement);
-    final restored = (await ControlLayoutStore.load())[NesButton.a]!;
+    await ControlLayoutStore.save(GamepadButton.a, placement);
+    final restored = (await ControlLayoutStore.load())[GamepadButton.a]!;
     expect(restored.x, closeTo(0.31, 0.001));
     expect(restored.y, closeTo(0.68, 0.001));
     expect(restored.scale, closeTo(1.4, 0.001));
@@ -32,13 +32,13 @@ void main() {
 
   test('reset restores defaults', () async {
     await ControlLayoutStore.save(
-      NesButton.start,
+      GamepadButton.start,
       const ControlPlacement(x: 0.9, y: 0.2, scale: 1.5),
     );
     await ControlLayoutStore.reset();
-    final restored = (await ControlLayoutStore.load())[NesButton.start]!;
-    expect(restored.x, ControlLayoutStore.defaults[NesButton.start]!.x);
-    expect(restored.y, ControlLayoutStore.defaults[NesButton.start]!.y);
+    final restored = (await ControlLayoutStore.load())[GamepadButton.start]!;
+    expect(restored.x, ControlLayoutStore.defaults[GamepadButton.start]!.x);
+    expect(restored.y, ControlLayoutStore.defaults[GamepadButton.start]!.y);
     expect(restored.scale, 1);
     expect(restored.visible, isTrue);
   });

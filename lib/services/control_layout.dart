@@ -1,6 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../core/controller/nes_controller.dart';
+import '../core/controller/gamepad_state.dart';
 
 class ControlPlacement {
   const ControlPlacement({
@@ -29,28 +29,28 @@ class ControlPlacement {
       );
 }
 
-/// Saved individually per NES button, matching WiFiPad's move/size/show editor.
+/// Saved individually per gamepad button, matching WiFiPad's move/size/show editor.
 class ControlLayoutStore {
   ControlLayoutStore._();
 
-  static const String _prefix = 'nes_control_';
+  static const String _prefix = 'gamepad_control_';
 
-  static const Map<NesButton, ControlPlacement> defaults =
-      <NesButton, ControlPlacement>{
-    NesButton.up: ControlPlacement(x: 0.15, y: 0.43),
-    NesButton.down: ControlPlacement(x: 0.15, y: 0.70),
-    NesButton.left: ControlPlacement(x: 0.075, y: 0.565),
-    NesButton.right: ControlPlacement(x: 0.225, y: 0.565),
-    NesButton.b: ControlPlacement(x: 0.74, y: 0.69),
-    NesButton.a: ControlPlacement(x: 0.86, y: 0.57),
-    NesButton.select: ControlPlacement(x: 0.43, y: 0.84),
-    NesButton.start: ControlPlacement(x: 0.57, y: 0.84),
+  static const Map<GamepadButton, ControlPlacement> defaults =
+      <GamepadButton, ControlPlacement>{
+    GamepadButton.up: ControlPlacement(x: 0.15, y: 0.43),
+    GamepadButton.down: ControlPlacement(x: 0.15, y: 0.70),
+    GamepadButton.left: ControlPlacement(x: 0.075, y: 0.565),
+    GamepadButton.right: ControlPlacement(x: 0.225, y: 0.565),
+    GamepadButton.b: ControlPlacement(x: 0.74, y: 0.69),
+    GamepadButton.a: ControlPlacement(x: 0.86, y: 0.57),
+    GamepadButton.select: ControlPlacement(x: 0.43, y: 0.84),
+    GamepadButton.start: ControlPlacement(x: 0.57, y: 0.84),
   };
 
-  static Future<Map<NesButton, ControlPlacement>> load() async {
+  static Future<Map<GamepadButton, ControlPlacement>> load() async {
     final prefs = await SharedPreferences.getInstance();
-    return <NesButton, ControlPlacement>{
-      for (final button in NesButton.values)
+    return <GamepadButton, ControlPlacement>{
+      for (final button in GamepadButton.values)
         button: ControlPlacement(
           x: prefs.getDouble(_key(button, 'x')) ?? defaults[button]!.x,
           y: prefs.getDouble(_key(button, 'y')) ?? defaults[button]!.y,
@@ -61,7 +61,7 @@ class ControlLayoutStore {
   }
 
   static Future<void> save(
-    NesButton button,
+    GamepadButton button,
     ControlPlacement placement,
   ) async {
     final prefs = await SharedPreferences.getInstance();
@@ -74,13 +74,13 @@ class ControlLayoutStore {
 
   static Future<void> reset() async {
     final prefs = await SharedPreferences.getInstance();
-    for (final button in NesButton.values) {
+    for (final button in GamepadButton.values) {
       for (final field in const <String>['x', 'y', 'scale', 'visible']) {
         await prefs.remove(_key(button, field));
       }
     }
   }
 
-  static String _key(NesButton button, String field) =>
+  static String _key(GamepadButton button, String field) =>
       '$_prefix${button.name}_$field';
 }

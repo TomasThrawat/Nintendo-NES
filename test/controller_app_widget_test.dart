@@ -6,8 +6,8 @@ import 'package:nintendo_nes/controller_main.dart';
 void main() {
   testWidgets('controller app exposes only NES Wi-Fi controls', (tester) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
-    await tester.pumpWidget(const NesWifiControllerApp());
-    expect(find.text('NES Wi-Fi Controller'), findsOneWidget);
+    await tester.pumpWidget(const GamepadControllerApp());
+    expect(find.text('NES-Style Wi-Fi Controller'), findsOneWidget);
     expect(find.text('Receiver IPv4 address'), findsOneWidget);
     expect(find.text('16-character pairing code'), findsNothing);
     expect(find.byType(TextField), findsOneWidget);
