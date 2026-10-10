@@ -7,7 +7,14 @@ class SystemGamepadBridge {
   static const MethodChannel _channel = MethodChannel('com.tomastharwat.nintendo_nes/gamepad');
 
   static Future<void> start() async {
-    final started = await _channel.invokeMethod<bool>('startGamepad');
+    final started = await _channel
+        .invokeMethod<bool>('startGamepad')
+        .timeout(
+          const Duration(seconds: 35),
+          onTimeout: () => throw TimeoutException(
+            'Receiver startup timed out waiting for the Android/Shizuku gamepad bridge.',
+          ),
+        );
     if (started != true) throw StateError('The TV did not register a virtual gamepad.');
   }
 

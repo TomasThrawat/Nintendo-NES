@@ -13,6 +13,8 @@ import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.IBinder
+import android.os.Handler
+import android.os.Looper
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -26,12 +28,27 @@ class MainActivity : FlutterActivity() {
  private var service: IGamepadService? = null
  private var pending: MethodChannel.Result? = null
  private var binding = false
+ private var startupStage = "checking Shizuku"
+ private val mainHandler = Handler(Looper.getMainLooper())
+ private val startupTimeout = Runnable {
+  val callback = pending
+  if (callback != null) {
+   val stage = startupStage
+   pending = null
+   binding = false
+   callback.error("gamepad_start_timeout", "Timed out while $stage. Confirm Shizuku is running and this app is authorized, then try again.", null)
+  }
+ }
  private val args = Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name))
   .daemon(false).processNameSuffix("gamepad").debuggable(false).version(1)
  private val permissions = Shizuku.OnRequestPermissionResultListener { code, grant ->
   if (code == REQUEST) {
    if (grant == PackageManager.PERMISSION_GRANTED) bindGamepad()
-   else { pending?.error("shizuku_permission_denied", "Grant this app permission in Shizuku on the TV.", null); pending = null }
+   else {
+    mainHandler.removeCallbacks(startupTimeout)
+    pending?.error("shizuku_permission_denied", "Grant this app permission in Shizuku on the TV.", null)
+    pending = null
+   }
   }
  }
  private val connection = object : ServiceConnection {
@@ -40,6 +57,7 @@ class MainActivity : FlutterActivity() {
   }
   override fun onServiceDisconnected(name: ComponentName) {
    binding = false; service = null
+   mainHandler.removeCallbacks(startupTimeout)
    pending?.error("gamepad_service_disconnected", "Shizuku service disconnected.", null); pending = null
   }
  }
@@ -61,24 +79,44 @@ class MainActivity : FlutterActivity() {
    if (!Shizuku.pingBinder()) { result.error("shizuku_unavailable", "Start Shizuku on TV using Wireless debugging.", null); return }
    if (Shizuku.isPreV11()) { result.error("shizuku_outdated", "Update Shizuku on TV.", null); return }
    pending = result
+   startupStage = if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) "binding the Shizuku service" else "waiting for Shizuku permission"
+   mainHandler.removeCallbacks(startupTimeout)
+   mainHandler.postDelayed(startupTimeout, 30000)
    if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindGamepad()
    else Shizuku.requestPermission(REQUEST)
-  } catch (e: Exception) { pending = null; result.error("gamepad_start_failed", e.message, null) }
+  } catch (e: Exception) {
+   mainHandler.removeCallbacks(startupTimeout)
+   pending = null
+   result.error("gamepad_start_failed", e.message, null)
+  }
  }
  private fun bindGamepad() {
   if (service != null) { startBoundService(); return }
   if (binding) return
-  try { binding = true; Shizuku.bindUserService(args, connection) }
-  catch (e: Exception) { binding = false; pending?.error("gamepad_bind_failed", e.message, null); pending = null }
+  try {
+   startupStage = "binding the Shizuku user service"
+   binding = true
+   Shizuku.bindUserService(args, connection)
+  } catch (e: Exception) {
+   binding = false
+   mainHandler.removeCallbacks(startupTimeout)
+   pending?.error("gamepad_bind_failed", e.message, null)
+   pending = null
+  }
  }
  private fun startBoundService() {
   val callback = pending ?: return
   try {
+   startupStage = "registering the virtual gamepad through uinput"
    val pad = service ?: throw IllegalStateException("Shizuku service did not connect.")
    if (pad.start(PORT)) callback.success(true)
-   else callback.error("uinput_registration_failed", pad.lastError().ifBlank { "TV could not register gamepad; check uinput support." }, null)
-  } catch (e: Exception) { callback.error("gamepad_start_failed", e.message, null) }
-  finally { pending = null }
+   else callback.error("uinput_registration_failed", pad.lastError().ifBlank { "TV could not register gamepad; check whether its firmware supports uinput." }, null)
+  } catch (e: Exception) {
+   callback.error("gamepad_start_failed", e.message, null)
+  } finally {
+   mainHandler.removeCallbacks(startupTimeout)
+   pending = null
+  }
  }
  private fun setButtons(mask: Int, result: MethodChannel.Result) {
   try {

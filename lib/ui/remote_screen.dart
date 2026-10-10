@@ -92,7 +92,10 @@ class _RemoteScreenState extends State<RemoteScreen> {
         });
       }
     } on Object catch (error) {
-      if (mounted) _showError(error.toString());
+      if (mounted) {
+        setState(() => _status = 'Receiver startup failed: $error');
+        _showError(error.toString());
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
