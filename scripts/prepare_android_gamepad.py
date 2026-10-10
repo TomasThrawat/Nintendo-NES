@@ -287,7 +287,7 @@ class MainActivity : Activity() {
 
     private val userServiceArgs = Shizuku.UserServiceArgs(
         ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name)
-    ).daemon(false).processNameSuffix("gamepad").debuggable(false).version(3)
+    ).daemon(false).processNameSuffix("gamepad").debuggable(false).tag("nintendo-nes-gamepad").version(4)
 
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { code, grant ->
         mainHandler.post {
@@ -1351,6 +1351,41 @@ for dependency in dependencies:
 for feature in features:
     if re.search(r'^\s*' + re.escape(feature) + r'\s*=\s*true\s*$', g, re.M) is None:
         raise SystemExit("Required Android build feature is disabled: " + feature)
+
+# Shizuku creates this UserService through reflection, so R8 must preserve its class and constructor.
+proguard = Path("android/app/proguard-rules.pro")
+keep_rule = "-keep class com.tomastharwat.nintendo_nes.GamepadUserService { *; }"
+existing_rules = proguard.read_text(encoding="utf-8") if proguard.is_file() else ""
+if keep_rule not in existing_rules:
+    proguard.parent.mkdir(parents=True, exist_ok=True)
+    prefix = existing_rules.rstrip() + "\n\n" if existing_rules.strip() else ""
+    proguard.write_text(
+        prefix + "# Shizuku reflectively instantiates this binder service; keep its name and constructor.\n" +
+        keep_rule + "\n",
+        encoding="utf-8",
+    )
+
+# Ensure release builds load the generated keep rule without changing the minification policy.
+release_match = re.search(r"(?m)^(?P<indent>[ \t]*)release[ \t]*\{", g)
+if not release_match:
+    raise SystemExit("Could not find Android release build type for Shizuku keep rules.")
+release_open = g.find("{", release_match.start())
+depth = 0
+release_end = None
+for pos in range(release_open, len(g)):
+    if g[pos] == "{":
+        depth += 1
+    elif g[pos] == "}":
+        depth -= 1
+        if depth == 0:
+            release_end = pos
+            break
+if release_end is None:
+    raise SystemExit("Could not parse Android release build type block.")
+release_block = g[release_open:release_end + 1]
+if "proguard-rules.pro" not in release_block:
+    rule_indent = release_match.group("indent") + "    "
+    g = g[:release_end] + "\n" + rule_indent + 'proguardFiles("proguard-rules.pro")\n' + g[release_end:]
 
 gradle.write_text(g, encoding="utf-8")
 print("Configured Shizuku dependencies, AIDL generation, and BuildConfig.")

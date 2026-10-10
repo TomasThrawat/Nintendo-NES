@@ -162,6 +162,14 @@ class ReceiverDiagnosticTests(QuietTestCase):
   self.assertIn("BuildConfig.APPLICATION_ID + \"/\" + GamepadUserService::class.java.name", main)
   self.assertIn("ReceiverLogger.log", main)
 
+ def test_shizuku_user_service_is_safe_under_r8_obfuscation(self):
+  source = Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
+  args = source.split("private val userServiceArgs = Shizuku.UserServiceArgs(",1)[1].split("private val permissionListener",1)[0]
+  self.assertIn('.tag("nintendo-nes-gamepad")', args)
+  self.assertIn(".version(4)", args)
+  self.assertIn('-keep class com.tomastharwat.nintendo_nes.GamepadUserService { *; }', source)
+  self.assertIn('proguardFiles("proguard-rules.pro")', source)
+
  def test_user_service_exports_diagnostics_over_aidl(self):
   source = Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
   bridge = source.split("user_service = r'''",1)[1].split("\\n'''\\n\\nuinput",1)[0]
