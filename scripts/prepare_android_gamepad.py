@@ -28,6 +28,8 @@ class MainActivity : FlutterActivity() {
  private var service: IGamepadService? = null
  private var pending: MethodChannel.Result? = null
  private var binding = false
+ private var bindAttempts = 0
+ private var activeConnection: ServiceConnection? = null
  private var startupStage = "checking Shizuku"
  private val mainHandler = Handler(Looper.getMainLooper())
  private val startupTimeout = Runnable {
@@ -36,14 +38,20 @@ class MainActivity : FlutterActivity() {
    val stage = startupStage
    pending = null
    binding = false
+   mainHandler.removeCallbacks(bindAttemptTimeout)
    callback.error("gamepad_start_timeout", "Timed out while $stage. Confirm Shizuku is running and this app is authorized, then try again.", null)
+  }
+ }
+ private val bindAttemptTimeout = Runnable {
+  if (pending != null && binding && service == null) {
+   retryBind("No connection callback from Shizuku after ${bindAttempts} bind attempt(s).")
   }
  }
  private val args = Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name))
   .daemon(false).processNameSuffix("gamepad").debuggable(false).version(1)
  private val permissions = Shizuku.OnRequestPermissionResultListener { code, grant ->
   if (code == REQUEST) {
-   if (grant == PackageManager.PERMISSION_GRANTED) bindGamepad()
+   if (grant == PackageManager.PERMISSION_GRANTED) scheduleBindGamepad()
    else {
     mainHandler.removeCallbacks(startupTimeout)
     pending?.error("shizuku_permission_denied", "Grant this app permission in Shizuku on the TV.", null)
@@ -51,12 +59,18 @@ class MainActivity : FlutterActivity() {
    }
   }
  }
- private val connection = object : ServiceConnection {
+ private fun newConnection(): ServiceConnection = object : ServiceConnection {
   override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-   binding = false; service = IGamepadService.Stub.asInterface(binder); startBoundService()
+   if (activeConnection !== this) return
+   mainHandler.removeCallbacks(bindAttemptTimeout)
+   binding = false
+   service = IGamepadService.Stub.asInterface(binder)
+   startBoundService()
   }
   override fun onServiceDisconnected(name: ComponentName) {
-   binding = false; service = null
+   if (activeConnection !== this) return
+   mainHandler.removeCallbacks(bindAttemptTimeout)
+   binding = false; activeConnection = null; service = null
    mainHandler.removeCallbacks(startupTimeout)
    pending?.error("gamepad_service_disconnected", "Shizuku service disconnected.", null); pending = null
   }
@@ -79,10 +93,12 @@ class MainActivity : FlutterActivity() {
    if (!Shizuku.pingBinder()) { result.error("shizuku_unavailable", "Start Shizuku on TV using Wireless debugging.", null); return }
    if (Shizuku.isPreV11()) { result.error("shizuku_outdated", "Update Shizuku on TV.", null); return }
    pending = result
-   startupStage = if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) "binding the Shizuku service" else "waiting for Shizuku permission"
+   bindAttempts = 0
+   startupStage = if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) "waiting to bind the Shizuku user service" else "waiting for Shizuku permission"
    mainHandler.removeCallbacks(startupTimeout)
+   mainHandler.removeCallbacks(bindAttemptTimeout)
    mainHandler.postDelayed(startupTimeout, 30000)
-   if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindGamepad()
+   if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) scheduleBindGamepad()
    else Shizuku.requestPermission(REQUEST)
   } catch (e: Exception) {
    mainHandler.removeCallbacks(startupTimeout)
@@ -90,17 +106,48 @@ class MainActivity : FlutterActivity() {
    result.error("gamepad_start_failed", e.message, null)
   }
  }
+ private fun scheduleBindGamepad() {
+  if (pending == null || service != null || binding) return
+  startupStage = "waiting briefly before binding the Shizuku user service"
+  mainHandler.postDelayed({
+   if (pending != null && service == null && !binding) bindGamepad()
+  }, 500)
+ }
  private fun bindGamepad() {
+  if (pending == null) return
   if (service != null) { startBoundService(); return }
   if (binding) return
+  bindAttempts += 1
   try {
-   startupStage = "binding the Shizuku user service"
+   if (!Shizuku.pingBinder()) throw IllegalStateException("Shizuku binder is not connected.")
+   startupStage = "binding the Shizuku user service (attempt ${bindAttempts} of 3)"
    binding = true
-   Shizuku.bindUserService(args, connection)
+   val attemptConnection = newConnection()
+   activeConnection = attemptConnection
+   mainHandler.removeCallbacks(bindAttemptTimeout)
+   mainHandler.postDelayed(bindAttemptTimeout, 4000)
+   Shizuku.bindUserService(args, attemptConnection)
   } catch (e: Exception) {
-   binding = false
+   retryBind(e.message ?: "Failed to bind the Shizuku user service.")
+  }
+ }
+ private fun retryBind(reason: String) {
+  mainHandler.removeCallbacks(bindAttemptTimeout)
+  val previousConnection = activeConnection
+  activeConnection = null
+  binding = false
+  if (previousConnection != null) {
+   try { Shizuku.unbindUserService(args, previousConnection, false) } catch (_: Exception) { }
+  }
+  if (pending == null) return
+  if (bindAttempts < 3) {
+   startupStage = "retrying Shizuku user service binding after attempt ${bindAttempts}"
+   mainHandler.postDelayed({
+    if (pending != null && service == null && !binding) bindGamepad()
+   }, 500)
+  } else {
    mainHandler.removeCallbacks(startupTimeout)
-   pending?.error("gamepad_bind_failed", e.message, null)
+   pending?.error("gamepad_bind_failed", "$reason Retried binding 3 times. Confirm Shizuku is running, then stop and start the receiver again.", null)
    pending = null
   }
  }
@@ -115,6 +162,7 @@ class MainActivity : FlutterActivity() {
    callback.error("gamepad_start_failed", e.message, null)
   } finally {
    mainHandler.removeCallbacks(startupTimeout)
+   mainHandler.removeCallbacks(bindAttemptTimeout)
    pending = null
   }
  }
@@ -130,7 +178,13 @@ class MainActivity : FlutterActivity() {
   catch (e: Exception) { result.error("gamepad_stop_failed", e.message, null) }
  }
  override fun onDestroy() {
+  mainHandler.removeCallbacksAndMessages(null)
   try { service?.stop() } catch (_: Exception) { }
+  val connectionToRelease = activeConnection
+  activeConnection = null
+  if (connectionToRelease != null) {
+   try { Shizuku.unbindUserService(args, connectionToRelease, false) } catch (_: Exception) { }
+  }
   Shizuku.removeRequestPermissionResultListener(permissions); super.onDestroy()
  }
 }
