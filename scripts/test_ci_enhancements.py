@@ -1,11 +1,24 @@
 #!/usr/bin/env python3
 """Offline regression coverage for CI helper tools; standard library only."""
-import importlib.util, json, re, tempfile, unittest, zipfile
+import contextlib, importlib.util, io, json, re, tempfile, unittest, zipfile
 from pathlib import Path
 spec=importlib.util.spec_from_file_location("ci_enhancements",Path(__file__).with_name("ci_enhancements.py"))
 mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
 
-class ImpactTests(unittest.TestCase):
+class QuietTestCase(unittest.TestCase):
+ def setUp(self):
+  self._stdout_redirect = contextlib.redirect_stdout(io.StringIO())
+  self._stderr_redirect = contextlib.redirect_stderr(io.StringIO())
+  self._stdout_redirect.__enter__()
+  self._stderr_redirect.__enter__()
+  self.addCleanup(self._restore_output)
+
+ def _restore_output(self):
+  self._stdout_redirect.__exit__(None, None, None)
+  self._stderr_redirect.__exit__(None, None, None)
+
+
+class ImpactTests(QuietTestCase):
  def test_push_uses_full_suite(self): self.assertEqual(mod.change_impact(["lib/math.dart"],event="push",targeted=True)["mode"],"full")
  def test_related_test_is_selected(self):
   with tempfile.TemporaryDirectory() as d:
@@ -20,7 +33,7 @@ class ImpactTests(unittest.TestCase):
  def test_coverage_gate_forces_full_suite(self): self.assertEqual(mod.change_impact(["lib/math.dart"],event="pull_request",targeted=True,force_full=True)["mode"],"full")
  def test_unmapped_runtime_file_is_full(self): self.assertEqual(mod.change_impact(["lib/data.dart"],event="pull_request",targeted=True,test_root=Path("/nonexistent"))["mode"],"full")
 
-class LogTests(unittest.TestCase):
+class LogTests(QuietTestCase):
  def test_signatures_deduplicate_locations_and_ignore_known_noise(self):
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/"x.log"; p.write_text("warning: lib/a.dart:3:4: lint\nwarning: lib/a.dart:9:2: lint\nCaught exception: Already watching path: /tmp/android\n")
@@ -47,7 +60,7 @@ class LogTests(unittest.TestCase):
    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
     self.assertEqual(mod.cmd_logs(args),1)
 
-class ApkTests(unittest.TestCase):
+class ApkTests(QuietTestCase):
  def _make(self,path):
   with zipfile.ZipFile(path,"w") as z:
    z.writestr("lib/arm64-v8a/libapp.so",b"binary"); z.writestr("classes.dex",b"dex"); z.writestr("assets/large.dat",b"x"*1000)
@@ -85,7 +98,7 @@ class ApkTests(unittest.TestCase):
    import argparse
    self.assertEqual(mod.cmd_apk(argparse.Namespace(apk=str(apk),badging="",expected_abi="",max_size_mb=0,max_entry_size_mb=0,forbid_permissions="",output_dir=str(root/"out")),),2)
 
-class GamepadDirectionTests(unittest.TestCase):
+class GamepadDirectionTests(QuietTestCase):
  def test_generated_bridge_uses_explicit_dpad_key_events(self):
   source=Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
   bridge=source.split("uinput = r'''",1)[1].split("\n'''\n\naidl = r'''",1)[0]
@@ -123,7 +136,7 @@ class GamepadDirectionTests(unittest.TestCase):
   self.assertIn("private val connection: ServiceConnection = object : ServiceConnection {",main)
 
 
-class QualityTests(unittest.TestCase):
+class QualityTests(QuietTestCase):
  def test_coverage_gate_fails_below_threshold(self):
   with tempfile.TemporaryDirectory() as d:
    root=Path(d); (root/"coverage.json").write_text('{"coverage_percent":74.5}')
@@ -137,3 +150,9 @@ class QualityTests(unittest.TestCase):
    self.assertEqual(mod.cmd_quality(a),0)
 
 if __name__=="__main__": unittest.main(verbosity=2)
+
+
+class WorkflowConfigTests(QuietTestCase):
+ def test_gradle_watcher_is_disabled_for_hosted_android_build(self):
+  workflow = Path(__file__).parent.parent / ".github" / "workflows" / "flutter-ci.yml"
+  self.assertIn("org.gradle.vfs.watch=false", workflow.read_text(encoding="utf-8"))

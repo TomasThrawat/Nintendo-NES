@@ -230,6 +230,16 @@ jobs:
               gradle.write_text(source)
           if 'create("receiver")' not in source or 'create("controller")' not in source:
               raise SystemExit("Missing receiver/controller Android product flavors.")
+
+          # Avoid a duplicate Gradle filesystem watcher exception in hosted CI builds.
+          gradle_properties = Path("android/gradle.properties")
+          properties = gradle_properties.read_text(encoding="utf-8")
+          watcher_setting = "org.gradle.vfs.watch=false"
+          if watcher_setting not in properties.splitlines():
+              gradle_properties.write_text(
+                  properties.rstrip() + "\n" + watcher_setting + "\n",
+                  encoding="utf-8",
+              )
           PY
 
       - name: Generate Shizuku-backed virtual gamepad receiver bridge
@@ -244,7 +254,7 @@ jobs:
       - name: Check whitespace errors
         run: git diff --check
 
-      - name: Build multi-ABI Android TV receiver and arm64 controller APKs
+      - name: Build ARM64 Android TV receiver and controller APKs
         shell: bash
         run: |
           set -euo pipefail
