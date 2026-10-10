@@ -76,6 +76,9 @@ jobs:
       - name: Show toolchain
         run: flutter --version
 
+      - name: Test shared CI helper scripts
+        run: python3 scripts/test_ci_enhancements.py
+
       - name: Generate Android files, permissions, and app roles
         shell: bash
         run: |
