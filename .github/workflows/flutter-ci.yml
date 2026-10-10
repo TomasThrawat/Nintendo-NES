@@ -1,4 +1,4 @@
-name: Flutter CI
+name: Shared Flutter CI
 
 on:
   push:
@@ -7,26 +7,69 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
 
 concurrency:
   group: flutter-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  verify:
-    runs-on: ubuntu-latest
+  shared-flutter-ci:
+    name: Shared Flutter CI (pinned reusable workflow)
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@ccb67192213f010f32072a3ef66ca4b3f7538366
+    with:
+      flutter-channel: stable
+      flutter-version: ""
+      run-analyze: true
+      run-tests: true
+      run-screenshot-tests: true
+      generate-coverage-report: true
+      # The shared workflow builds one default APK. This project has two
+      # product flavors, so the flavor-specific release builds below stay local.
+      check-format: false
+      build-apk: false
+      target-platform: android-arm64
+      generate-android: false
+      android-project-name: nintendo_nes
+      android-organization: com.tomastharwat
+      run-emulator-tests: false
+      emulator-api-level: 35
+      run-security-audit: true
+      fail-on-security-findings: false
+      enable-targeted-pr-tests: false
+      run-apk-smoke-test: false
+      min-coverage-percent: 0
+      max-apk-size-mb: 0
+      max-apk-entry-size-mb: 0
+      forbid-permissions: ""
+      fail-on-new-warnings: false
+      generate-artifact-attestation: false
+
+  build-role-apks:
+    name: Build and inspect receiver/controller APKs
+    needs: [shared-flutter-ci]
+    if: ${{ needs.shared-flutter-ci.result == 'success' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
+    permissions:
+      contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
       - name: Install Flutter stable
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
           cache: true
+
       - name: Show toolchain
         run: flutter --version
+
       - name: Generate Android files, permissions, and app roles
         shell: bash
         run: |
@@ -37,16 +80,28 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           import re
+
           manifest = Path("android/app/src/main/AndroidManifest.xml")
           content = manifest.read_text()
           permission = '<uses-permission android:name="android.permission.INTERNET" />'
           if permission not in content:
-              content = re.sub(r'(<manifest\b[^>]*>)', r'\1\n    ' + permission, content, count=1)
-          content, count = re.subn(r'(android:label=")[^"]+(")', r'\1${appName}\2', content, count=1)
+              content = re.sub(
+                  r'(<manifest\b[^>]*>)',
+                  r'\1\n    ' + permission,
+                  content,
+                  count=1,
+              )
+          content, count = re.subn(
+              r'(android:label=")[^"]+(")',
+              r'\1__APP_NAME_PLACEHOLDER__\2',
+              content,
+              count=1,
+          )
           if count != 1:
               raise SystemExit("Could not make the launcher label flavor-specific.")
           if 'android.permission.INTERNET' not in content:
-              raise SystemExit("Missing INTERNET permission needed for local TCP.")
+              raise SystemExit("Missing INTERNET permission needed for local UDP.")
+          content = content.replace("__APP_NAME_PLACEHOLDER__", "${appName}")
           manifest.write_text(content)
 
           gradle = Path("android/app/build.gradle.kts")
@@ -76,24 +131,25 @@ jobs:
           if 'create("receiver")' not in source or 'create("controller")' not in source:
               raise SystemExit("Missing receiver/controller Android product flavors.")
           PY
-      - name: Resolve dependencies
+
+      - name: Resolve dependencies without upgrading constraints
         run: flutter pub get
-      - name: Format Dart source
+
+      - name: Format Dart source as in the previous project workflow
         run: dart format lib test
+
       - name: Check whitespace errors
         run: git diff --check
-      - name: Static analysis
-        run: flutter analyze --no-pub
-      - name: Unit and loopback tests
-        run: flutter test --no-pub --reporter expanded
+
       - name: Build receiver and controller arm64 APKs
         shell: bash
         run: |
           set -euo pipefail
-          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm64
-          flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64
+          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm64 --no-pub
+          flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --no-pub
           test -s build/app/outputs/flutter-apk/app-receiver-release.apk
           test -s build/app/outputs/flutter-apk/app-controller-release.apk
+
       - name: Inspect both APKs
         shell: bash
         run: |
@@ -112,7 +168,11 @@ jobs:
             local expected_label="$3"
             test -s "$apk"
             python3 - "$apk" "$expected_id" "$expected_label" "$aapt" <<'PY'
-          import re, subprocess, sys, zipfile
+          import re
+          import subprocess
+          import sys
+          import zipfile
+
           apk_path, expected_id, expected_label, aapt = sys.argv[1:]
           with zipfile.ZipFile(apk_path) as archive:
               names = archive.namelist()
@@ -121,16 +181,43 @@ jobs:
               wrong = [n for n in native if not n.startswith("lib/arm64-v8a/")]
               assert not wrong, f"{apk_path}: unexpected native ABIs {wrong}"
               assert any(n.startswith("lib/arm64-v8a/") for n in native), f"{apk_path}: missing arm64-v8a libraries"
-          badging = subprocess.run([aapt, "dump", "badging", apk_path], check=True, text=True, capture_output=True).stdout
+
+          badging = subprocess.run(
+              [aapt, "dump", "badging", apk_path],
+              check=True,
+              text=True,
+              capture_output=True,
+          ).stdout
           package = re.search(r"^package: name='([^']+)'", badging, re.M)
           labels = re.findall(r"^application-label:'([^']*)'", badging, re.M)
-          assert package and package.group(1) == expected_id, f"{apk_path}: unexpected package ID {package.group(1) if package else None}"
-          assert expected_label in labels, f"{apk_path}: expected launcher label {expected_label!r}, got {labels}"
-          permissions = subprocess.run([aapt, "dump", "permissions", apk_path], check=True, text=True, capture_output=True).stdout
-          assert "android.permission.INTERNET" in permissions, f"{apk_path}: missing INTERNET permission"
-          for forbidden in ("android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION", "android.permission.ACCESS_WIFI_STATE", "android.permission.NEARBY_WIFI_DEVICES"):
-              assert forbidden not in permissions, f"{apk_path}: unnecessary permission present: {forbidden}"
-          print(f"Verified {apk_path}: package={expected_id}, label={expected_label}, ABI=arm64-v8a only")
+          assert package and package.group(1) == expected_id, (
+              f"{apk_path}: unexpected package ID {package.group(1) if package else None}"
+          )
+          assert expected_label in labels, (
+              f"{apk_path}: expected label {expected_label!r}, got {labels}"
+          )
+          permissions = subprocess.run(
+              [aapt, "dump", "permissions", apk_path],
+              check=True,
+              text=True,
+              capture_output=True,
+          ).stdout
+          assert "android.permission.INTERNET" in permissions, (
+              f"{apk_path}: missing INTERNET permission"
+          )
+          for forbidden in (
+              "android.permission.ACCESS_FINE_LOCATION",
+              "android.permission.ACCESS_COARSE_LOCATION",
+              "android.permission.ACCESS_WIFI_STATE",
+              "android.permission.NEARBY_WIFI_DEVICES",
+          ):
+              assert forbidden not in permissions, (
+                  f"{apk_path}: unnecessary permission present: {forbidden}"
+              )
+          print(
+              f"Verified {apk_path}: package={expected_id}, "
+              f"label={expected_label}, ABI=arm64-v8a only"
+          )
           print("Merged APK permissions:")
           print(permissions.strip())
           PY
@@ -138,8 +225,9 @@ jobs:
           }
           inspect_apk "build/app/outputs/flutter-apk/app-receiver-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver"
           inspect_apk "build/app/outputs/flutter-apk/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller"
+
       - name: Upload receiver and controller APKs
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@v7
         with:
           name: nintendo-nes-arm64-apps
           path: |

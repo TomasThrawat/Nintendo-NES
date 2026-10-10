@@ -33,6 +33,8 @@ Both devices must share local Wi-Fi. Internet, accounts, cloud relays, and Shizu
 
 ## CI builds
 
+Analysis, tests, coverage and security auditing use the reusable workflow pinned to the latest upstream commit `ccb67192213f010f32072a3ef66ca4b3f7538366` ([source commit](https://github.com/TomasThrawat/hyouka-flutter-workflows/commit/ccb67192213f010f32072a3ef66ca4b3f7538366)). A separate local job is retained for building the two Android product flavors because the shared workflow's standard build path creates a single APK. Dependency/outdated reports are informational; CI does not upgrade declared package constraints.
+
 GitHub Actions builds and inspects two arm64-only APKs:
 - `app-receiver-release.apk` — package `com.tomastharwat.nintendo_nes`
 - `app-controller-release.apk` — package `com.tomastharwat.nes_controller`
