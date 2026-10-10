@@ -18,7 +18,13 @@ concurrency:
 jobs:
   shared-flutter-ci:
     name: Shared Flutter CI (pinned reusable workflow)
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@ccb67192213f010f32072a3ef66ca4b3f7538366
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@92cded954be5653a48fada29e926e4a3e4f402b7
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+      id-token: write
+      attestations: write
     with:
       flutter-channel: stable
       flutter-version: ""
