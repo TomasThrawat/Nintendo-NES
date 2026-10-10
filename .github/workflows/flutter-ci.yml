@@ -254,11 +254,11 @@ jobs:
       - name: Check whitespace errors
         run: git diff --check
 
-      - name: Build ARMv7 and ARM64 Android TV receiver APKs and ARM64 controller
+      - name: Build ARMv7 Android TV receiver APK and ARM64 controller
         shell: bash
         run: |
           set -euo pipefail
-          # Keep the phone controller arm64-only. Build separate receiver APKs for 32-bit and 64-bit Android TVs.
+          # The receiver is intentionally 32-bit ARMv7 only; keep the phone controller arm64-only.
           # Flutter/Gradle may otherwise retain ABI intermediates from the first flavor in the next output.
           mkdir -p ci-apks
           flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --split-per-abi --no-pub
@@ -268,10 +268,6 @@ jobs:
           flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm --split-per-abi --no-pub
           test -s build/app/outputs/flutter-apk/app-armeabi-v7a-receiver-release.apk
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-receiver-release.apk ci-apks/app-receiver-v7a-release.apk
-
-          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm64 --split-per-abi --no-pub
-          test -s build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk ci-apks/app-receiver-arm64-v8a-release.apk
 
       - name: Inspect all APKs and validate exact ABI
         shell: bash
@@ -368,7 +364,6 @@ jobs:
             ls -lh "$apk"
           }
           inspect_apk "ci-apks/app-receiver-v7a-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver armeabi-v7a
-          inspect_apk "ci-apks/app-receiver-arm64-v8a-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver arm64-v8a
           inspect_apk "ci-apks/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller" controller arm64-v8a
 
       - name: Upload receiver and controller APKs
@@ -377,7 +372,6 @@ jobs:
           name: nintendo-nes-compatible-apps
           path: |
             ci-apks/app-receiver-v7a-release.apk
-            ci-apks/app-receiver-arm64-v8a-release.apk
             ci-apks/app-controller-release.apk
             assets/controller_icon.svg
             assets/controller_launcher_icon.xml
