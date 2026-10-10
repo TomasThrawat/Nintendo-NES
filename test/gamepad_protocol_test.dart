@@ -91,6 +91,24 @@ void main() {
       expect(host.isConnected, isTrue);
       expect(observed.last, containsAll(const {GamepadButton.a, GamepadButton.right}));
 
+      // Exercise each D-pad direction through the actual UDP client/server protocol.
+      for (final direction in const <GamepadButton>[
+        GamepadButton.up,
+        GamepadButton.down,
+        GamepadButton.left,
+        GamepadButton.right,
+      ]) {
+        final previousCount = observed.length;
+        client.setButtons({direction});
+        final deadline = DateTime.now().add(const Duration(seconds: 3));
+        while (observed.length <= previousCount && DateTime.now().isBefore(deadline)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+        expect(observed.length, greaterThan(previousCount),
+            reason: 'Receiver did not forward $direction');
+        expect(observed.last, {direction});
+      }
+
       await client.disconnect();
       await released.future.timeout(const Duration(seconds: 3));
       await disconnected.future.timeout(const Duration(seconds: 3));

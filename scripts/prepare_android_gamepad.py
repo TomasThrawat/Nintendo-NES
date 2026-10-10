@@ -570,39 +570,43 @@ class UinputGamepad(private val output: OutputStream) {
         private const val ID = 1
         private const val SET_EV = 100
         private const val SET_KEY = 101
-        private const val SET_ABS = 103
         private const val EV_KEY = 1
-        private const val EV_ABS = 3
         private const val BTN_A = 304
         private const val BTN_B = 305
         private const val BTN_SELECT = 314
         private const val BTN_START = 315
-        private const val HAT_X = 16
-        private const val HAT_Y = 17
+        private const val BTN_DPAD_UP = 0x220
+        private const val BTN_DPAD_DOWN = 0x221
+        private const val BTN_DPAD_LEFT = 0x222
+        private const val BTN_DPAD_RIGHT = 0x223
     }
 
     private val line = StringBuilder(256)
     private var previousMask = -1
+    private val buttonKeyMap = listOf(
+        1 to BTN_A,
+        2 to BTN_B,
+        4 to BTN_SELECT,
+        8 to BTN_START,
+        16 to BTN_DPAD_UP,
+        32 to BTN_DPAD_DOWN,
+        64 to BTN_DPAD_LEFT,
+        128 to BTN_DPAD_RIGHT,
+    )
 
     fun register() {
         val configuration = JSONArray().apply {
-            put(cfg(SET_EV, listOf(EV_KEY, EV_ABS)))
-            put(cfg(SET_KEY, listOf(BTN_A, BTN_B, BTN_SELECT, BTN_START)))
-            put(cfg(SET_ABS, listOf(HAT_X, HAT_Y)))
-        }
-        val axes = JSONArray().apply {
-            put(axis(HAT_X))
-            put(axis(HAT_Y))
+            put(cfg(SET_EV, listOf(EV_KEY)))
+            put(cfg(SET_KEY, buttonKeyMap.map { it.second }))
         }
         write(JSONObject().apply {
             put("id", ID)
             put("command", "register")
-            put("name", "Nintendo NES Controller")
-            put("vid", 0x045e)
-            put("pid", 0x028e)
+            put("name", "Nintendo Switch Pro Controller")
+            put("vid", 0x057e)
+            put("pid", 0x2009)
             put("bus", "usb")
             put("configuration", configuration)
-            put("abs_info", axes)
         })
         write(JSONObject().apply {
             put("id", ID)
@@ -613,23 +617,24 @@ class UinputGamepad(private val output: OutputStream) {
 
     @Synchronized
     fun setMask(mask: Int) {
-        val state = mask and 0xff
+        var state = mask and 0xff
+        if ((state and 0xc0) == 0xc0) state = state and 0x3f
+        if ((state and 0x30) == 0x30) state = state and 0xcf
         if (state == previousMask) return
-        val events = ArrayList<Int>(18)
+
+        val events = ArrayList<Int>(24)
         fun add(type: Int, code: Int, value: Int) {
             events.add(type)
             events.add(code)
             events.add(value)
         }
-        for ((bit, key) in listOf(1 to BTN_A, 2 to BTN_B, 4 to BTN_SELECT, 8 to BTN_START)) {
-            val old = previousMask >= 0 && (previousMask and bit) != 0
-            val now = (state and bit) != 0
-            if (previousMask < 0 || old != now) add(EV_KEY, key, if (now) 1 else 0)
+        for ((bit, key) in buttonKeyMap) {
+            val wasPressed = previousMask >= 0 && (previousMask and bit) != 0
+            val isPressed = (state and bit) != 0
+            if (previousMask < 0 || wasPressed != isPressed) {
+                add(EV_KEY, key, if (isPressed) 1 else 0)
+            }
         }
-        val x = (if ((state and 64) != 0) 1 else 0) + (if ((state and 128) != 0) -1 else 0)
-        val y = (if ((state and 16) != 0) -1 else 0) + (if ((state and 32) != 0) 1 else 0)
-        add(EV_ABS, HAT_X, x.coerceIn(-1, 1))
-        add(EV_ABS, HAT_Y, y.coerceIn(-1, 1))
         previousMask = state
         inject(events)
     }
@@ -665,18 +670,6 @@ class UinputGamepad(private val output: OutputStream) {
     private fun cfg(type: Int, values: List<Int>) = JSONObject().apply {
         put("type", type)
         put("data", JSONArray(values))
-    }
-
-    private fun axis(code: Int) = JSONObject().apply {
-        put("code", code)
-        put("info", JSONObject().apply {
-            put("value", 0)
-            put("minimum", -1)
-            put("maximum", 1)
-            put("fuzz", 0)
-            put("flat", 0)
-            put("resolution", 0)
-        })
     }
 }
 '''

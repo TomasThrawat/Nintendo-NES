@@ -2,7 +2,7 @@
 
 ## Setup
 1. Start Shizuku on the Android TV using Wireless debugging pairing.
-2. Open **NES-Style Gamepad Receiver**, tap **Start gamepad receiver**, and grant Shizuku permission. It registers an Xbox 360-compatible system virtual gamepad via `uinput`, then listens on UDP port `27191`.
+2. Open **NES-Style Gamepad Receiver**, tap **Start gamepad receiver**, and grant Shizuku permission. It registers a system virtual gamepad via `uinput`, then listens on UDP port `27191`. D-pad directions use explicit `BTN_DPAD_UP/DOWN/LEFT/RIGHT` key press/release events rather than HAT-axis values, with Android's Nintendo Switch Pro Controller key-layout identity.
 3. On the phone, open **NES-Style Wi-Fi Controller**, enter the TV IPv4 address, and connect. The phone switches to landscape with D-pad, A, B, START, and SELECT. Buttons can be moved, resized, or hidden separately.
 
 A standard Android app cannot inject controller input into unrelated apps on its own. Shizuku shell access is required on the TV. Firmware support for `uinput` and input mappings varies.
