@@ -34,13 +34,18 @@ class LogTests(unittest.TestCase):
    self.assertEqual(data["counts"]["errors"],1); self.assertEqual(data["counts"]["warnings"],1); self.assertEqual(data["counts"]["info_lints"],1)
    self.assertEqual(data["counts"]["infrastructure"],1); self.assertEqual(data["counts"]["known_flutter_tool_noise"],1)
  def test_new_warnings_gate_only_after_baseline(self):
+  import argparse, contextlib, io
   with tempfile.TemporaryDirectory() as d:
    r=Path(d); (r/"x.log").write_text("warning: new thing\n")
-   import argparse
    args=argparse.Namespace(log_root=d,output_dir=str(r/"out"),baseline=str(r/"missing.json"),fail_on_new_warnings=True)
-   self.assertEqual(mod.cmd_logs(args),0)
+   # Capture expected CLI diagnostics so GitHub Actions does not interpret a
+   # test fixture's ::error:: line as a real workflow error annotation.
+   with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    self.assertEqual(mod.cmd_logs(args),0)
    base=r/"baseline.json"; base.write_text('{"signatures":[]}')
-   args.baseline=str(base); args.output_dir=str(r/"out2"); self.assertEqual(mod.cmd_logs(args),1)
+   args.baseline=str(base); args.output_dir=str(r/"out2")
+   with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    self.assertEqual(mod.cmd_logs(args),1)
 
 class ApkTests(unittest.TestCase):
  def _make(self,path):
