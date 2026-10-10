@@ -627,8 +627,7 @@ class UinputGamepad(private val output: OutputStream) {
             if (previousMask < 0 || old != now) add(EV_KEY, key, if (now) 1 else 0)
         }
         val x = (if ((state and 64) != 0) 1 else 0) + (if ((state and 128) != 0) -1 else 0)
-        val y = (if ((state and (1 shl 4)) != 0) -1 else 0) +
-            (if ((state and (1 shl 5)) != 0) 1 else 0)
+        val y = (if ((state and 16) != 0) -1 else 0) + (if ((state and 32) != 0) 1 else 0)
         add(EV_ABS, HAT_X, x.coerceIn(-1, 1))
         add(EV_ABS, HAT_Y, y.coerceIn(-1, 1))
         previousMask = state
