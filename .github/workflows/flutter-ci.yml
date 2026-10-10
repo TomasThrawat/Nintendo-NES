@@ -191,6 +191,13 @@ jobs:
           controller_icon.parent.mkdir(parents=True, exist_ok=True)
           controller_icon.write_text(controller_icon_source.read_text(encoding="utf-8"), encoding="utf-8")
 
+          receiver_icon_source = Path("assets/receiver_launcher_icon.xml")
+          if not receiver_icon_source.is_file():
+              raise SystemExit("Receiver launcher icon source is missing.")
+          receiver_icon = Path("android/app/src/main/res/drawable/receiver_launcher_icon.xml")
+          receiver_icon.parent.mkdir(parents=True, exist_ok=True)
+          receiver_icon.write_text(receiver_icon_source.read_text(encoding="utf-8"), encoding="utf-8")
+
           gradle = Path("android/app/build.gradle.kts")
           source = gradle.read_text()
           if 'create("receiver")' not in source:
@@ -202,8 +209,8 @@ jobs:
                       applicationId = "com.tomastharwat.nintendo_nes"
                       manifestPlaceholders["appName"] = "Nintendo NES Receiver"
                       manifestPlaceholders["appOrientation"] = "landscape"
-                      manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
-                      manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher"
+                      manifestPlaceholders["appIcon"] = "@drawable/receiver_launcher_icon"
+                      manifestPlaceholders["appRoundIcon"] = "@drawable/receiver_launcher_icon"
                   }
                   create("controller") {
                       dimension = "role"
@@ -362,6 +369,8 @@ jobs:
             ci-apks/app-controller-release.apk
             assets/controller_icon.svg
             assets/controller_launcher_icon.xml
+            assets/receiver_icon.svg
+            assets/receiver_launcher_icon.xml
             assets/README.md
           if-no-files-found: error
           retention-days: 14

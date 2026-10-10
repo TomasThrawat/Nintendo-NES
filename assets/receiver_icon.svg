@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <title>Nintendo NES Receiver</title>
+  <rect width="108" height="108" fill="#000000"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="3.8" stroke-linecap="round">
+    <path d="M27 20 C42 7 66 7 81 20"/>
+    <path d="M36 26 C46 18 62 18 72 26"/>
+    <path d="M45 31 C50 27 58 27 63 31"/>
+  </g>
+  <circle cx="54" cy="32" r="2.3" fill="#FFFFFF"/>
+  <path d="M20 36 H88 Q94 36 94 42 V66 Q94 73 87 73 H21 Q14 73 14 66 V42 Q14 36 20 36Z" fill="#FFFFFF"/>
+  <path d="M22 42 H86 V66 H22Z" fill="#000000"/>
+  <path d="M50 44 H58 V52 H67 L54 63 L41 52 H50Z" fill="#FFFFFF"/>
+  <path d="M47 73 H61 V78 H68 V82 H40 V78 H47Z" fill="#FFFFFF"/>
+</svg>
