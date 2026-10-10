@@ -128,7 +128,7 @@ jobs:
                   content = re.sub(r'(<manifest\b[^>]*>)', r'\1\n' + feature, content, count=1)
           content, application_count = re.subn(
               r'(<application\b[^>]*)(>)',
-              r'\1 android:banner="@drawable/tv_banner"\2',
+              r'\1 android:banner="@drawable/tv_banner" android:icon="${appIcon}" android:roundIcon="${appRoundIcon}"\2',
               content,
               count=1,
           )
@@ -176,6 +176,13 @@ jobs:
           </vector>
           """, encoding="utf-8")
 
+          controller_icon_source = Path("assets/controller_launcher_icon.xml")
+          if not controller_icon_source.is_file():
+              raise SystemExit("Controller launcher icon source is missing.")
+          controller_icon = Path("android/app/src/main/res/drawable/controller_launcher_icon.xml")
+          controller_icon.parent.mkdir(parents=True, exist_ok=True)
+          controller_icon.write_text(controller_icon_source.read_text(encoding="utf-8"), encoding="utf-8")
+
           gradle = Path("android/app/build.gradle.kts")
           source = gradle.read_text()
           if 'create("receiver")' not in source:
@@ -187,12 +194,16 @@ jobs:
                       applicationId = "com.tomastharwat.nintendo_nes"
                       manifestPlaceholders["appName"] = "Nintendo NES Receiver"
                       manifestPlaceholders["appOrientation"] = "landscape"
+                      manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
+                      manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_round"
                   }
                   create("controller") {
                       dimension = "role"
                       applicationId = "com.tomastharwat.nes_controller"
                       manifestPlaceholders["appName"] = "NES Wi-Fi Controller"
                       manifestPlaceholders["appOrientation"] = "unspecified"
+                      manifestPlaceholders["appIcon"] = "@drawable/controller_launcher_icon"
+                      manifestPlaceholders["appRoundIcon"] = "@drawable/controller_launcher_icon"
                   }
               }
 
@@ -341,5 +352,8 @@ jobs:
           path: |
             ci-apks/app-receiver-release.apk
             ci-apks/app-controller-release.apk
+            assets/controller_icon.svg
+            assets/controller_launcher_icon.xml
+            assets/README.md
           if-no-files-found: error
           retention-days: 14

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 108 108">
+  <title>NES Wi-Fi Controller</title>
+  <rect width="108" height="108" fill="#000000"/>
+  <path d="M18 35C21 27 29 22 39 22H69C79 22 87 27 90 35L96 65C99 78 88 85 79 76L67 64H41L29 76C20 85 9 78 12 65Z" fill="#FFFFFF"/>
+  <path d="M29 38H35V46H43V52H35V60H29V52H21V46H29Z" fill="#000000"/>
+  <path d="M70 42C70 38 77 38 77 42C77 46 70 46 70 42Z" fill="#000000"/>
+  <path d="M81 52C81 48 88 48 88 52C88 56 81 56 81 52Z" fill="#000000"/>
+  <rect x="43" y="43" width="7" height="3" rx="1.5" fill="#000000"/>
+  <rect x="54" y="43" width="7" height="3" rx="1.5" fill="#000000"/>
+</svg>
