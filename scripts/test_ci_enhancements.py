@@ -136,51 +136,38 @@ class GamepadDirectionTests(QuietTestCase):
   self.assertIn("private val connection: ServiceConnection = object : ServiceConnection {",main)
 
 
-class ReceiverDiagnosticTests(QuietTestCase):
- def test_downloads_logger_uses_media_store_and_has_a_fallback(self):
+class ReceiverLoggingRemovalTests(QuietTestCase):
+ def test_generated_app_has_no_log_persistence_or_logcat(self):
   source = Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
-  logger = source.split("receiver_logger = r'''",1)[1].split("\\n'''",1)[0]
-  self.assertIn("MediaStore.Downloads.EXTERNAL_CONTENT_URI", logger)
-  self.assertIn('FOLDER_NAME = "Nintendo NES Receiver"', logger)
-  self.assertIn('FILE_NAME = "receiver.log"', logger)
-  self.assertIn("MediaStore.MediaColumns.RELATIVE_PATH", logger)
-  self.assertIn("MAX_LOG_BYTES", logger)
-  self.assertIn("Log.getStackTraceString(error)", logger)
-  self.assertIn("openInternalWriter", logger)
+  forbidden = ["receiver_logger = r" + "'''", "receiver.log", "MediaStore.Downloads", "Log.println", "android.util.Log", "drainLogs", "diagnosticLines", "legacy_log_permission", "write(kotlin / \"ReceiverLogger.kt\", receiver_logger)"]
+  for marker in forbidden:
+   self.assertNotIn(marker, source, marker)
+  self.assertIn('receiver_logger_file = kotlin / "ReceiverLogger.kt"', source)
+  self.assertIn("if receiver_logger_file.exists():", source)
+  self.assertNotIn("ReceiverLogger.log", source)
+  self.assertNotIn('android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"', source)
 
  def test_shizuku_binding_is_async_and_timed(self):
   source = Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
-  main = source.split("main = r'''",1)[1].split("\\n'''\\n\\ncontroller_activity",1)[0]
-  self.assertIn("private val ioExecutor = Executors.newCachedThreadPool", main)
-  self.assertIn("Calling Shizuku.bindUserService on background thread", main)
-  self.assertIn("BIND_TIMEOUT_MS = 20000L", main)
-  self.assertIn("START_TIMEOUT_MS = 25000L", main)
-  self.assertIn("onBindingDied", main)
-  self.assertIn("onNullBinding", main)
-  self.assertIn("ServiceConnection.onServiceConnected", main)
-  self.assertNotIn("userServiceArgs.componentName", main)
-  self.assertIn("BuildConfig.APPLICATION_ID + \"/\" + GamepadUserService::class.java.name", main)
-  self.assertIn("ReceiverLogger.log", main)
+  self.assertIn("private val ioExecutor = Executors.newCachedThreadPool", source)
+  self.assertIn("Shizuku.bindUserService(userServiceArgs, connection)", source)
+  self.assertIn("BIND_TIMEOUT_MS = 20000L", source)
+  self.assertIn("START_TIMEOUT_MS = 25000L", source)
+  self.assertIn("onBindingDied", source)
+  self.assertIn("onNullBinding", source)
+  self.assertIn("override fun onServiceConnected", source)
+  self.assertNotIn("userServiceArgs.componentName", source)
+  self.assertIn("ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name)", source)
+  self.assertNotIn("ReceiverLogger.log", source)
 
- def test_shizuku_user_service_is_safe_under_r8_obfuscation(self):
+ def test_user_service_handles_input_without_diagnostics(self):
   source = Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
-  args = source.split("private val userServiceArgs = Shizuku.UserServiceArgs(",1)[1].split("private val permissionListener",1)[0]
-  self.assertIn('.tag("nintendo-nes-gamepad")', args)
-  self.assertIn(".version(4)", args)
-  self.assertIn('-keep class com.tomastharwat.nintendo_nes.GamepadUserService { *; }', source)
-  self.assertIn('proguardFiles("proguard-rules.pro")', source)
-
- def test_user_service_exports_diagnostics_over_aidl(self):
-  source = Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
-  bridge = source.split("user_service = r'''",1)[1].split("\\n'''\\n\\nuinput",1)[0]
-  aidl = source.split("aidl = r'''",1)[1].split("\\n'''",1)[0]
-  self.assertIn("uinput output:", bridge)
-  self.assertIn("UDP receive loop started", bridge)
-  self.assertIn("Receiver startup failed:", bridge)
-  self.assertIn("Input mask changed", bridge)
-  self.assertIn("override fun drainLogs(): String", bridge)
-  self.assertIn("String drainLogs();", aidl)
-  self.assertIn('write(kotlin / "ReceiverLogger.kt", receiver_logger)', source)
+  self.assertIn("sock.receive(packet)", source)
+  self.assertIn("override fun packetsReceived(): Long", source)
+  self.assertIn("override fun lastError(): String", source)
+  self.assertIn("while (reader.readLine() != null)", source)
+  for marker in ("diagnostic(", "Log.println", "android.util.Log", "drainLogs", "diagnosticLines", "Input mask changed"):
+   self.assertNotIn(marker, source, marker)
 
 class QualityTests(QuietTestCase):
  def test_coverage_gate_fails_below_threshold(self):
