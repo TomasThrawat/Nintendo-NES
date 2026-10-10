@@ -1,38 +1,26 @@
-# Nintendo NES
+# NES-Style Wi-Fi Gamepad for Android TV
 
-A dedicated Android emulator project for the Nintendo Entertainment System (NES) / Famicom. This project is intentionally separate from WifiPad and is focused on one console rather than a universal multi-system interface.
+Use an Android phone as an NES-style Wi-Fi controller for games already running on an Android TV. **This is not an NES emulator and does not load ROMs.**
 
-## Project goals
+## Apps
+- **NES-Style Gamepad Receiver** runs on the TV. Press **Start gamepad receiver** to register a system-wide virtual gamepad and listen on UDP port `27191`. Enter the displayed IPv4 address on the phone.
+- **NES-Style Wi-Fi Controller** runs on the phone. Enter only the TV IP, connect, and the screen switches to landscape with D-pad, A, B, SELECT, and START. Each control can be moved, resized, or hidden independently.
 
-- Load locally supplied NES game images (`.nes`) in supported iNES and NES 2.0 formats.
-- Implement and test the NES CPU (Ricoh 2A03 / 6502 family), memory map, PPU graphics pipeline, and APU audio path.
-- Provide accurate NES controller input, including D-pad, **A**, **B**, **Select**, and **Start**. Start/Select must generate distinct, reliable press and release events.
-- Render gameplay smoothly and keep emulation timing independent from UI rendering.
-- Support save data where the cartridge uses battery-backed memory, and add save states only after deterministic state capture is reliable.
-- Keep the emulator core isolated from the Android UI so CPU, memory, cartridge, graphics, audio, and controller behavior can be tested independently.
+## TV setup
+A regular Android app cannot inject gamepad events into other apps merely by receiving UDP packets. The TV receiver uses Shizuku's shell-privileged user service to run Android's `uinput` command and register an Xbox 360-compatible virtual controller. Games can then receive input through Android's system input stack. This requires TV firmware with usable `uinput` support; compatibility is not guaranteed on every TV.
 
-## Scope
+1. Enable Developer options and **Wireless debugging** on the TV.
+2. Install Shizuku on the TV, pair through **Pair device with pairing code**, then tap **Start** in Shizuku.
+3. Open **NES-Style Gamepad Receiver**, start the receiver, and grant Shizuku permission.
+4. Confirm the receiver reports a registered gamepad and shows the TV IP.
+5. On the phone, open **NES-Style Wi-Fi Controller**, enter that IP, and connect.
+6. Use **Edit controls** to move, resize, or hide buttons. Disconnecting or stopping the receiver releases inputs.
 
-This repository is for **NES/Famicom only**. It will not host PSP, PlayStation, SNES, Sega, or other console implementations. Those should be separate projects if needed.
+After a TV reboot, Shizuku usually must be started again but does not need re-pairing. No root, PC, cloud relay, or Shizuku on the phone is required.
 
-No commercial game ROMs, copyrighted game assets, or proprietary BIOS files are included. Use game dumps you are legally entitled to use. This is an independent project and is not affiliated with or endorsed by Nintendo.
+Both devices must share the same trusted Wi-Fi. UDP port `27191` is unauthenticated and unencrypted; never expose it to the internet.
 
-## Planned milestones
+## CI and limitations
+CI analyzes/tests Flutter, generates the Kotlin/AIDL bridge, builds both APKs, and inspects package IDs, ABIs, TV launcher metadata, and permissions. It keeps dependency constraints unchanged. The reusable workflow is pinned to upstream commit `92cded954be5653a48fada29e926e4a3e4f402b7`. The phone controller is `arm64-v8a` only; the receiver is `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
 
-1. Create the Android app shell and a testable emulator-core module.
-2. Implement cartridge parsing, mapper support, memory bus, and CPU instruction tests.
-3. Implement PPU rendering and frame timing; validate against public homebrew/test ROMs where their licenses permit.
-4. Implement APU audio and timing synchronization.
-5. Add touch controls and physical gamepad support; verify Start/Select and A/B on real games.
-6. Add game library management, save data, performance profiling, and release APK workflow.
-
-## Current status
-
-**Repository scaffold only.** The emulator core, playable game loop, ROM browser, and APK build pipeline have not been implemented or verified yet. The milestones above are the work plan, not claims of completed features.
-
-## Development principles
-
-- Keep each change small, testable, and tied to a specific emulator subsystem.
-- Never bundle copyrighted ROMs in source code or CI artifacts.
-- Test input edge cases, especially short button taps and simultaneous inputs.
-- Read complete CI/build logs and address real errors and relevant warnings before calling a build complete.
+CI cannot test a real TV firmware or game. On the TV, check the device in a gamepad tester, then the intended game. If `uinput` is missing or denied, receiver startup should show an error rather than claim success.
