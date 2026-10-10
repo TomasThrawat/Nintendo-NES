@@ -158,6 +158,8 @@ class ReceiverDiagnosticTests(QuietTestCase):
   self.assertIn("onBindingDied", main)
   self.assertIn("onNullBinding", main)
   self.assertIn("ServiceConnection.onServiceConnected", main)
+  self.assertNotIn("userServiceArgs.componentName", main)
+  self.assertIn("BuildConfig.APPLICATION_ID + \"/\" + GamepadUserService::class.java.name", main)
   self.assertIn("ReceiverLogger.log", main)
 
  def test_user_service_exports_diagnostics_over_aidl(self):

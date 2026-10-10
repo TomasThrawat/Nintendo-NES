@@ -517,7 +517,7 @@ class MainActivity : Activity() {
         ReceiverLogger.log(
             "INFO",
             "Starting Shizuku bind attempt=" + thisAttempt + " timeoutMs=" + BIND_TIMEOUT_MS +
-                " component=" + userServiceArgs.componentName
+                " component=" + BuildConfig.APPLICATION_ID + "/" + GamepadUserService::class.java.name
         )
         bindTimeout?.let { mainHandler.removeCallbacks(it) }
         val timeout = Runnable {
