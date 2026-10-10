@@ -51,7 +51,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
       },
     );
     _client = LocalControllerClient();
-    if (!_isReceiver) _status = 'Enter receiver IP address';
+    if (!_isReceiver) {
+      _status = 'Enter receiver IP address';
+    }
   }
 
   void _forwardButtons(Set<GamepadButton> buttons) {
@@ -96,7 +98,9 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
   Future<void> _stopReceiver() async {
     await _server.stop();
-    if (!mounted) return;
+    if (!mounted) {
+      return;
+    }
     setState(() { _addresses = const <String>[]; _received = 0; });
   }
 

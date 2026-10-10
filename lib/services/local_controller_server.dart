@@ -96,7 +96,7 @@ class LocalControllerServer {
     onInputCountChanged?.call(0);
     onButtonsChanged(const <GamepadButton>{});
     if (systemGamepadEnabled) {
-      try { await SystemGamepadBridge.setButtons(const <GamepadButton>{}); } on Object { }
+      try { await SystemGamepadBridge.setButtons(const <GamepadButton>{}); } on Object { /* The bridge may already be stopped. */ }
       await SystemGamepadBridge.stop();
     }
     onStatusChanged('Stopped');
