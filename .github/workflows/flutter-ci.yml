@@ -248,7 +248,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Build the ARM64-only controller first and preserve its APK before the multi-ABI receiver build.
+          # Build both variants for ARM64 only.
           # Flutter/Gradle may otherwise retain ABI intermediates from the first flavor in the next output.
           mkdir -p ci-apks
           # Flutter may emit a fat APK when --target-platform is used without --split-per-abi.
@@ -257,9 +257,9 @@ jobs:
           test -s build/app/outputs/flutter-apk/app-arm64-v8a-controller-release.apk
           cp build/app/outputs/flutter-apk/app-arm64-v8a-controller-release.apk ci-apks/app-controller-release.apk
 
-          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm,android-arm64,android-x64 --no-pub
-          test -s build/app/outputs/flutter-apk/app-receiver-release.apk
-          cp build/app/outputs/flutter-apk/app-receiver-release.apk ci-apks/app-receiver-release.apk
+          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm64 --split-per-abi --no-pub
+          test -s build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk ci-apks/app-receiver-release.apk
 
       - name: Inspect both APKs
         shell: bash
@@ -291,10 +291,7 @@ jobs:
               native = [n for n in names if n.startswith("lib/") and n.endswith(".so")]
               abis = {n.split("/")[1] for n in native}
               assert native, f"{apk_path}: APK has no native shared libraries"
-          if role == "receiver":
-              expected_abis = {"armeabi-v7a", "arm64-v8a", "x86_64"}
-          else:
-              expected_abis = {"arm64-v8a"}
+          expected_abis = {"arm64-v8a"}
           assert abis == expected_abis, (
               f"{apk_path}: expected ABIs {sorted(expected_abis)}, found {sorted(abis)}"
           )

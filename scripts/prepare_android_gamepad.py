@@ -5,323 +5,693 @@ import re
 
 root = Path("android/app/src/main")
 kotlin = root / "kotlin/com/tomastharwat/nintendo_nes"
+receiver_kotlin = Path("android/app/src/receiver/kotlin/com/tomastharwat/nintendo_nes")
+controller_kotlin = Path("android/app/src/controller/kotlin/com/tomastharwat/nintendo_nes")
 aidl_dir = root / "aidl/com/tomastharwat/nintendo_nes"
 
 main = r'''package com.tomastharwat.nintendo_nes
+
+import android.app.Activity
 import android.content.ComponentName
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
+import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
-import android.os.IBinder
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
-import io.flutter.embedding.android.FlutterActivity
-import io.flutter.embedding.engine.FlutterEngine
-import io.flutter.plugin.common.MethodChannel
+import android.view.Gravity
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.TextView
 import rikka.shizuku.Shizuku
-class MainActivity : FlutterActivity() {
- companion object {
-  private const val CHANNEL = "com.tomastharwat.nintendo_nes/gamepad"
-  private const val REQUEST = 9001
-  private const val PORT = 27191
- }
- private var service: IGamepadService? = null
- private var pending: MethodChannel.Result? = null
- private var binding = false
- private var bindAttempts = 0
- private var activeConnection: ServiceConnection? = null
- private var startupStage = "checking Shizuku"
- private val mainHandler = Handler(Looper.getMainLooper())
- private val startupTimeout = Runnable {
-  val callback = pending
-  if (callback != null) {
-   val stage = startupStage
-   pending = null
-   binding = false
-   mainHandler.removeCallbacks(bindAttemptTimeout)
-   callback.error("gamepad_start_timeout", "Timed out while $stage. Confirm Shizuku is running and this app is authorized, then try again.", null)
-  }
- }
- private val bindAttemptTimeout = Runnable {
-  if (pending != null && binding && service == null) {
-   retryBind("No connection callback from Shizuku after ${bindAttempts} bind attempt(s).")
-  }
- }
- private val args = Shizuku.UserServiceArgs(ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name))
-  .daemon(false).processNameSuffix("gamepad").debuggable(false).version(1)
- private val permissions = Shizuku.OnRequestPermissionResultListener { code, grant ->
-  if (code == REQUEST) {
-   if (grant == PackageManager.PERMISSION_GRANTED) scheduleBindGamepad()
-   else {
-    mainHandler.removeCallbacks(startupTimeout)
-    pending?.error("shizuku_permission_denied", "Grant this app permission in Shizuku on the TV.", null)
-    pending = null
-   }
-  }
- }
- private fun newConnection(): ServiceConnection = object : ServiceConnection {
-  override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-   if (activeConnection !== this) return
-   mainHandler.removeCallbacks(bindAttemptTimeout)
-   binding = false
-   service = IGamepadService.Stub.asInterface(binder)
-   startBoundService()
-  }
-  override fun onServiceDisconnected(name: ComponentName) {
-   if (activeConnection !== this) return
-   mainHandler.removeCallbacks(bindAttemptTimeout)
-   binding = false; activeConnection = null; service = null
-   mainHandler.removeCallbacks(startupTimeout)
-   pending?.error("gamepad_service_disconnected", "Shizuku service disconnected.", null); pending = null
-  }
- }
- override fun onCreate(state: Bundle?) { super.onCreate(state); Shizuku.addRequestPermissionResultListener(permissions) }
- override fun configureFlutterEngine(engine: FlutterEngine) {
-  super.configureFlutterEngine(engine)
-  MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
-   when (call.method) {
-    "startGamepad" -> startGamepad(result)
-    "setButtons" -> setButtons(call.argument<Int>("mask") ?: 0, result)
-    "stopGamepad" -> stopGamepad(result)
-    else -> result.notImplemented()
-   }
-  }
- }
- private fun startGamepad(result: MethodChannel.Result) {
-  try {
-   if (service?.isRunning() == true) { result.success(true); return }
-   if (!Shizuku.pingBinder()) { result.error("shizuku_unavailable", "Start Shizuku on TV using Wireless debugging.", null); return }
-   if (Shizuku.isPreV11()) { result.error("shizuku_outdated", "Update Shizuku on TV.", null); return }
-   pending = result
-   bindAttempts = 0
-   startupStage = if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) "waiting to bind the Shizuku user service" else "waiting for Shizuku permission"
-   mainHandler.removeCallbacks(startupTimeout)
-   mainHandler.removeCallbacks(bindAttemptTimeout)
-   mainHandler.postDelayed(startupTimeout, 30000)
-   if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) scheduleBindGamepad()
-   else Shizuku.requestPermission(REQUEST)
-  } catch (e: Exception) {
-   mainHandler.removeCallbacks(startupTimeout)
-   pending = null
-   result.error("gamepad_start_failed", e.message, null)
-  }
- }
- private fun scheduleBindGamepad() {
-  if (pending == null || service != null || binding) return
-  startupStage = "waiting briefly before binding the Shizuku user service"
-  mainHandler.postDelayed({
-   if (pending != null && service == null && !binding) bindGamepad()
-  }, 500)
- }
- private fun bindGamepad() {
-  if (pending == null) return
-  if (service != null) { startBoundService(); return }
-  if (binding) return
-  bindAttempts += 1
-  try {
-   if (!Shizuku.pingBinder()) throw IllegalStateException("Shizuku binder is not connected.")
-   startupStage = "binding the Shizuku user service (attempt ${bindAttempts} of 3)"
-   binding = true
-   val attemptConnection = newConnection()
-   activeConnection = attemptConnection
-   mainHandler.removeCallbacks(bindAttemptTimeout)
-   mainHandler.postDelayed(bindAttemptTimeout, 4000)
-   Shizuku.bindUserService(args, attemptConnection)
-  } catch (e: Exception) {
-   retryBind(e.message ?: "Failed to bind the Shizuku user service.")
-  }
- }
- private fun retryBind(reason: String) {
-  mainHandler.removeCallbacks(bindAttemptTimeout)
-  val previousConnection = activeConnection
-  activeConnection = null
-  binding = false
-  if (previousConnection != null) {
-   try { Shizuku.unbindUserService(args, previousConnection, false) } catch (_: Exception) { }
-  }
-  if (pending == null) return
-  if (bindAttempts < 3) {
-   startupStage = "retrying Shizuku user service binding after attempt ${bindAttempts}"
-   mainHandler.postDelayed({
-    if (pending != null && service == null && !binding) bindGamepad()
-   }, 500)
-  } else {
-   mainHandler.removeCallbacks(startupTimeout)
-   pending?.error("gamepad_bind_failed", "$reason Retried binding 3 times. Confirm Shizuku is running, then stop and start the receiver again.", null)
-   pending = null
-  }
- }
- private fun startBoundService() {
-  val callback = pending ?: return
-  try {
-   startupStage = "registering the virtual gamepad through uinput"
-   val pad = service ?: throw IllegalStateException("Shizuku service did not connect.")
-   if (pad.start(PORT)) callback.success(true)
-   else callback.error("uinput_registration_failed", pad.lastError().ifBlank { "TV could not register gamepad; check whether its firmware supports uinput." }, null)
-  } catch (e: Exception) {
-   callback.error("gamepad_start_failed", e.message, null)
-  } finally {
-   mainHandler.removeCallbacks(startupTimeout)
-   mainHandler.removeCallbacks(bindAttemptTimeout)
-   pending = null
-  }
- }
- private fun setButtons(mask: Int, result: MethodChannel.Result) {
-  try {
-   val pad = service
-   if (pad == null || !pad.isRunning()) { result.error("gamepad_not_running", "Start the TV receiver first.", null); return }
-   pad.setButtons(mask and 0xff); result.success(null)
-  } catch (e: Exception) { result.error("gamepad_input_failed", e.message, null) }
- }
- private fun stopGamepad(result: MethodChannel.Result) {
-  try { service?.stop(); result.success(null) }
-  catch (e: Exception) { result.error("gamepad_stop_failed", e.message, null) }
- }
- override fun onDestroy() {
-  mainHandler.removeCallbacksAndMessages(null)
-  try { service?.stop() } catch (_: Exception) { }
-  val connectionToRelease = activeConnection
-  activeConnection = null
-  if (connectionToRelease != null) {
-   try { Shizuku.unbindUserService(args, connectionToRelease, false) } catch (_: Exception) { }
-  }
-  Shizuku.removeRequestPermissionResultListener(permissions); super.onDestroy()
- }
+import java.net.Inet4Address
+import java.net.NetworkInterface
+
+class MainActivity : Activity() {
+    companion object {
+        private const val REQUEST = 9001
+        private const val PORT = 27191
+    }
+
+    private var service: IGamepadService? = null
+    private var bound = false
+    private var binding = false
+    private var startRequested = false
+    private lateinit var statusView: TextView
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private val bindTimeout = Runnable {
+        if (binding && service == null) {
+            binding = false
+            startRequested = false
+            statusView.text = "No response from Shizuku. Check Shizuku and permission, then press Start again."
+            if (bound) {
+                try { Shizuku.unbindUserService(userServiceArgs, connection, false) } catch (_: Exception) { }
+                bound = false
+            }
+        }
+    }
+
+    private val statusTicker = object : Runnable {
+        override fun run() {
+            refreshStatus()
+            mainHandler.postDelayed(this, 1000)
+        }
+    }
+
+    private val userServiceArgs = Shizuku.UserServiceArgs(
+        ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name)
+    ).daemon(false).processNameSuffix("gamepad").debuggable(false).version(2)
+
+    private val permissionListener = Shizuku.OnRequestPermissionResultListener { code, grant ->
+        if (code == REQUEST) {
+            if (grant == PackageManager.PERMISSION_GRANTED) bindReceiver()
+            else {
+                startRequested = false
+                statusView.text = "Shizuku permission was denied. Grant permission and press Start again."
+            }
+        }
+    }
+
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            mainHandler.removeCallbacks(bindTimeout)
+            binding = false
+            service = IGamepadService.Stub.asInterface(binder)
+            if (startRequested) startReceiver() else refreshStatus()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) {
+            mainHandler.removeCallbacks(bindTimeout)
+            binding = false
+            service = null
+            statusView.text = "Shizuku service disconnected. Press Start to reconnect."
+        }
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setBackgroundColor(Color.BLACK)
+            setPadding(dp(28), dp(18), dp(28), dp(22))
+            isFocusableInTouchMode = true
+        }
+        val title = TextView(this).apply {
+            text = "Nintendo NES Receiver"
+            textSize = 28f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        statusView = TextView(this).apply {
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+        }
+        val startButton = Button(this).apply {
+            text = "Start"
+            isAllCaps = false
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            backgroundTintList = ColorStateList.valueOf(Color.rgb(45, 45, 45))
+            isFocusable = true
+            layoutParams = LinearLayout.LayoutParams(0, dp(64), 1f).apply {
+                marginEnd = dp(8)
+            }
+            setOnClickListener { requestShizuku() }
+        }
+        val stopButton = Button(this).apply {
+            text = "Stop"
+            isAllCaps = false
+            textSize = 20f
+            setTextColor(Color.WHITE)
+            backgroundTintList = ColorStateList.valueOf(Color.rgb(75, 25, 25))
+            isFocusable = true
+            layoutParams = LinearLayout.LayoutParams(0, dp(64), 1f).apply {
+                marginStart = dp(8)
+            }
+            setOnClickListener { stopReceiver() }
+        }
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            addView(startButton)
+            addView(stopButton)
+        }
+        root.addView(title, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(72)
+        ))
+        root.addView(statusView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        root.addView(actions, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, dp(72)
+        ))
+        setContentView(root)
+        startButton.requestFocus()
+
+        Shizuku.addRequestPermissionResultListener(permissionListener)
+        refreshStatus()
+        mainHandler.postDelayed(statusTicker, 1000)
+    }
+
+    private fun requestShizuku() {
+        if (service?.isRunning() == true) {
+            refreshStatus()
+            return
+        }
+        if (!Shizuku.pingBinder()) {
+            statusView.text = "Shizuku is not connected. Start Shizuku on the TV, then try again."
+            return
+        }
+        if (Shizuku.isPreV11()) {
+            statusView.text = "Shizuku is outdated. Update Shizuku on the TV."
+            return
+        }
+        when {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> bindReceiver()
+            Shizuku.shouldShowRequestPermissionRationale() ->
+                statusView.text = "Shizuku permission was denied before. Grant it in Shizuku, then press Start."
+            else -> Shizuku.requestPermission(REQUEST)
+        }
+    }
+
+    private fun bindReceiver() {
+        if (service != null) {
+            startReceiver()
+            return
+        }
+        if (binding) return
+        binding = true
+        bound = true
+        startRequested = true
+        statusView.text = "Connecting to Shizuku..."
+        mainHandler.removeCallbacks(bindTimeout)
+        mainHandler.postDelayed(bindTimeout, 12000)
+        try {
+            Shizuku.bindUserService(userServiceArgs, connection)
+        } catch (e: Exception) {
+            mainHandler.removeCallbacks(bindTimeout)
+            binding = false
+            bound = false
+            startRequested = false
+            statusView.text = "Could not bind Shizuku service: " + (e.message ?: "unknown error")
+        }
+    }
+
+    private fun startReceiver() {
+        mainHandler.removeCallbacks(bindTimeout)
+        binding = false
+        startRequested = false
+        val current = service
+        if (current == null) {
+            statusView.text = "Shizuku connected without a service binder. Press Start to retry."
+            return
+        }
+        try {
+            if (!current.isRunning() && !current.start(PORT)) {
+                val detail = current.lastError()
+                statusView.text = "Receiver startup failed: " +
+                    if (detail.isNullOrBlank()) "TV could not register the virtual gamepad." else detail
+            } else {
+                refreshStatus()
+            }
+        } catch (e: Exception) {
+            statusView.text = "Receiver startup failed: " + (e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    private fun stopReceiver() {
+        startRequested = false
+        mainHandler.removeCallbacks(bindTimeout)
+        try {
+            service?.stop()
+        } catch (e: Exception) {
+            statusView.text = "Could not stop receiver: " + (e.message ?: "unknown error")
+            return
+        }
+        refreshStatus()
+    }
+
+    private fun refreshStatus() {
+        if (!::statusView.isInitialized) return
+        val ip = localIp()
+        val current = service
+        statusView.text = try {
+            when {
+                binding && current == null ->
+                    "IP: " + ip + "    Port: " + PORT + "\nConnecting to Shizuku..."
+                current != null && current.isRunning() ->
+                    "IP: " + ip + "    Port: " + PORT + "\nListening for NES controller\nPackets received: " + current.packetsReceived()
+                current == null ->
+                    "IP: " + ip + "    Port: " + PORT + "\nReady. Press Start."
+                else -> {
+                    val detail = current.lastError()
+                    "IP: " + ip + "    Port: " + PORT + "\nNot running. " +
+                        if (detail.isNullOrBlank()) "Press Start to start the receiver." else detail
+                }
+            }
+        } catch (e: Exception) {
+            service = null
+            "Shizuku service disconnected. Press Start to reconnect.\n" + (e.message ?: "")
+        }
+    }
+
+    private fun localIp(): String {
+        return try {
+            val candidates = ArrayList<Pair<Int, String>>()
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return "unknown"
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                if (!networkInterface.isUp || networkInterface.isLoopback) continue
+                val addresses = networkInterface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val address = addresses.nextElement()
+                    if (address !is Inet4Address || address.isLoopbackAddress ||
+                        address.isLinkLocalAddress || !address.isSiteLocalAddress
+                    ) continue
+                    val name = networkInterface.name.lowercase()
+                    val rank = when {
+                        name.contains("wlan") || name.contains("wifi") -> 0
+                        name.startsWith("eth") -> 1
+                        else -> 2
+                    }
+                    val host = address.hostAddress
+                    if (host != null) candidates.add(rank to host)
+                }
+            }
+            candidates.sortedBy { it.first }.firstOrNull()?.second ?: "unknown"
+        } catch (_: Exception) {
+            "unknown"
+        }
+    }
+
+    private fun dp(value: Int): Int =
+        (value * resources.displayMetrics.density).toInt()
+
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        Shizuku.removeRequestPermissionResultListener(permissionListener)
+        try { service?.stop() } catch (_: Exception) { }
+        if (bound) {
+            try { Shizuku.unbindUserService(userServiceArgs, connection, true) } catch (_: Exception) { }
+            bound = false
+        }
+        super.onDestroy()
+    }
 }
 '''
+
+controller_activity = r'''package com.tomastharwat.nintendo_nes
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
+'''
+
 user_service = r'''package com.tomastharwat.nintendo_nes
+
 import android.os.Process as AndroidProcess
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
 class GamepadUserService : IGamepadService.Stub() {
- @Volatile private var process: Process? = null
- @Volatile private var pad: UinputGamepad? = null
- @Volatile private var active = false
- @Volatile private var error = ""
- override fun start(port: Int): Boolean {
-  if (active && process?.isAlive == true) return true
-  error = ""
-  var child: Process? = null
-  return try {
-   child = ProcessBuilder("uinput", "-").redirectErrorStream(true).start()
-   val runningProcess = child; process = runningProcess
-   Thread({
-    try { runningProcess.inputStream.bufferedReader().forEachLine { line ->
-     if (line.contains("error", true)) error = line.take(500)
-    } } catch (_: Exception) { }
-    val exit = try { runningProcess.waitFor() } catch (_: Exception) { -1 }
-    if (active && exit != 0) { error = "uinput exited with code " + exit; active = false }
-   }, "gamepad-uinput-drain").apply { isDaemon = true; start() }
-   val device = UinputGamepad(runningProcess.outputStream); pad = device; device.register()
-   if (!runningProcess.isAlive) throw IllegalStateException("uinput exited during registration.")
-   active = true; true
-  } catch (e: Exception) {
-   error = e.message ?: "Could not register virtual gamepad."
-   active = false
-   try { child?.outputStream?.close() } catch (_: Exception) { }
-   try { child?.destroy() } catch (_: Exception) { }
-   process = null; pad = null; false
-  }
- }
- override fun setButtons(mask: Int) {
-  val device = pad ?: throw IllegalStateException("Virtual gamepad is not registered.")
-  if (!active) throw IllegalStateException("Virtual gamepad is not running.")
-  try { device.setMask(mask and 0xff) }
-  catch (e: Exception) { error = e.message ?: "Input injection failed."; stop(); throw e }
- }
- override fun stop() {
-  active = false
-  try { pad?.injectNeutral() } catch (_: Exception) { }
-  pad = null
-  process?.let { try { it.outputStream.close() } catch (_: Exception) { }; try { it.destroy() } catch (_: Exception) { } }
-  process = null
- }
- override fun isRunning(): Boolean = active && process?.isAlive == true
- override fun lastError(): String = error
- override fun destroy() { stop(); AndroidProcess.killProcess(AndroidProcess.myPid()) }
+    companion object {
+        private const val MAGIC = 0x4e
+        private const val VERSION = 2
+        private const val INPUT = 0
+        private const val ACK = 1
+        private const val PACKET_SIZE = 8
+        private const val FAILSAFE_TIMEOUT_NANOS = 750_000_000L
+        private const val UINT32_MOD = 0x1_0000_0000L
+        private const val UINT32_HALF = 0x8000_0000L
+    }
+
+    @Volatile private var socket: DatagramSocket? = null
+    @Volatile private var uinputProcess: Process? = null
+    @Volatile private var pad: UinputGamepad? = null
+    private val running = AtomicBoolean(false)
+    private val received = AtomicLong(0)
+    private val inputLock = Any()
+    @Volatile private var error = ""
+    private var peerAddress: InetAddress? = null
+    private var peerPort = -1
+    private var lastSequence = -1L
+    @Volatile private var lastPacketNanos = 0L
+
+    @Synchronized
+    override fun start(port: Int): Boolean {
+        if (running.get() && uinputProcess?.isAlive == true && socket?.isClosed == false) return true
+        error = ""
+        received.set(0)
+        stop()
+        var process: Process? = null
+        var datagramSocket: DatagramSocket? = null
+        return try {
+            val runningProcess = ProcessBuilder("uinput", "-").redirectErrorStream(true).start()
+            process = runningProcess
+            uinputProcess = runningProcess
+            Thread({
+                try {
+                    runningProcess.inputStream.bufferedReader().forEachLine { line ->
+                        if (line.contains("error", true)) error = line.take(300)
+                    }
+                } catch (_: Exception) { }
+                val exitCode = try { runningProcess.waitFor() } catch (_: Exception) { -1 }
+                if (running.get()) {
+                    error = "uinput process ended (exit code: " + exitCode + ")"
+                    stop()
+                }
+            }, "nes-uinput-drain").apply { isDaemon = true; start() }
+
+            val device = UinputGamepad(runningProcess.outputStream)
+            pad = device
+            device.register()
+            device.setMask(0)
+            if (!runningProcess.isAlive) throw IllegalStateException("uinput exited during registration")
+
+            val activeSocket = DatagramSocket(null)
+            datagramSocket = activeSocket
+            activeSocket.reuseAddress = true
+            activeSocket.bind(InetSocketAddress(port))
+            socket = activeSocket
+            synchronized(inputLock) {
+                peerAddress = null
+                peerPort = -1
+                lastSequence = -1L
+                lastPacketNanos = System.nanoTime()
+            }
+            running.set(true)
+            Thread({ receiveLoop(activeSocket, device) }, "nes-udp-receiver").apply {
+                isDaemon = true
+                priority = Thread.MAX_PRIORITY
+                start()
+            }
+            Thread({ failsafeLoop(device) }, "nes-input-failsafe").apply {
+                isDaemon = true
+                start()
+            }
+            true
+        } catch (e: Exception) {
+            error = e.message ?: "Could not start the NES receiver."
+            running.set(false)
+            try { datagramSocket?.close() } catch (_: Exception) { }
+            try { pad?.injectNeutral() } catch (_: Exception) { }
+            try { process?.outputStream?.close() } catch (_: Exception) { }
+            try { process?.destroy() } catch (_: Exception) { }
+            socket = null
+            uinputProcess = null
+            pad = null
+            false
+        }
+    }
+
+    private fun receiveLoop(sock: DatagramSocket, device: UinputGamepad) {
+        val buffer = ByteArray(64)
+        val packet = DatagramPacket(buffer, buffer.size)
+        while (running.get()) {
+            try {
+                packet.length = buffer.size
+                sock.receive(packet)
+                handlePacket(sock, packet, device)
+            } catch (e: Exception) {
+                if (running.get()) {
+                    error = e.message ?: "NES UDP receiver failed."
+                    stop()
+                }
+            }
+        }
+    }
+
+    private fun handlePacket(sock: DatagramSocket, packet: DatagramPacket, device: UinputGamepad) {
+        if (packet.length != PACKET_SIZE) return
+        val data = packet.data
+        if ((data[0].toInt() and 0xff) != MAGIC ||
+            (data[1].toInt() and 0xff) != VERSION ||
+            (data[2].toInt() and 0xff) != INPUT
+        ) return
+
+        val sequence = (data[3].toLong() and 0xffL) or
+            ((data[4].toLong() and 0xffL) shl 8) or
+            ((data[5].toLong() and 0xffL) shl 16) or
+            ((data[6].toLong() and 0xffL) shl 24)
+        val mask = data[7].toInt() and 0xff
+        val sender = packet.address
+        val senderPort = packet.port
+        var accepted = false
+
+        synchronized(inputLock) {
+            if (!running.get()) return@synchronized
+            val now = System.nanoTime()
+            val samePeer = peerAddress?.address == sender.address && peerPort == senderPort
+            if (peerAddress != null && !samePeer) {
+                if (now - lastPacketNanos <= FAILSAFE_TIMEOUT_NANOS) return@synchronized
+                device.setMask(0)
+                peerAddress = null
+                peerPort = -1
+                lastSequence = -1L
+            }
+            if (peerAddress == null) {
+                peerAddress = sender
+                peerPort = senderPort
+                lastSequence = -1L
+            }
+            if (!isNewerSequence(sequence, lastSequence)) return@synchronized
+            device.setMask(mask)
+            lastSequence = sequence
+            lastPacketNanos = now
+            received.incrementAndGet()
+            accepted = true
+        }
+
+        if (!accepted) return
+        val acknowledgement = byteArrayOf(
+            MAGIC.toByte(), VERSION.toByte(), ACK.toByte(),
+            (sequence and 0xffL).toByte(),
+            ((sequence shr 8) and 0xffL).toByte(),
+            ((sequence shr 16) and 0xffL).toByte(),
+            ((sequence shr 24) and 0xffL).toByte(),
+            1.toByte()
+        )
+        try {
+            sock.send(DatagramPacket(acknowledgement, acknowledgement.size, sender, senderPort))
+        } catch (e: Exception) {
+            if (running.get()) error = e.message ?: "Could not send controller acknowledgement."
+        }
+    }
+
+    private fun isNewerSequence(incoming: Long, previous: Long): Boolean {
+        if (previous < 0L) return true
+        val difference = (incoming - previous + UINT32_MOD) % UINT32_MOD
+        return difference != 0L && difference < UINT32_HALF
+    }
+
+    private fun failsafeLoop(device: UinputGamepad) {
+        while (running.get()) {
+            try { Thread.sleep(100) } catch (_: InterruptedException) { return }
+            if (!running.get()) return
+            try {
+                synchronized(inputLock) {
+                    if (running.get() && peerAddress != null &&
+                        System.nanoTime() - lastPacketNanos > FAILSAFE_TIMEOUT_NANOS
+                    ) {
+                        device.setMask(0)
+                        peerAddress = null
+                        peerPort = -1
+                        lastSequence = -1L
+                    }
+                }
+            } catch (e: Exception) {
+                error = e.message ?: "NES input failsafe failed."
+                stop()
+                return
+            }
+        }
+    }
+
+    override fun setButtons(mask: Int) {
+        synchronized(inputLock) {
+            val device = pad ?: throw IllegalStateException("Virtual gamepad is not registered.")
+            if (!running.get()) throw IllegalStateException("NES receiver is not running.")
+            device.setMask(mask and 0xff)
+        }
+    }
+
+    @Synchronized
+    override fun stop() {
+        running.set(false)
+        synchronized(inputLock) {
+            peerAddress = null
+            peerPort = -1
+            lastSequence = -1L
+            try { pad?.injectNeutral() } catch (_: Exception) { }
+            val currentSocket = socket
+            socket = null
+            try { currentSocket?.close() } catch (_: Exception) { }
+            val currentProcess = uinputProcess
+            uinputProcess = null
+            try { currentProcess?.outputStream?.close() } catch (_: Exception) { }
+            try { currentProcess?.destroy() } catch (_: Exception) { }
+            pad = null
+        }
+    }
+
+    override fun isRunning(): Boolean =
+        running.get() && uinputProcess?.isAlive == true && socket?.isClosed == false
+
+    override fun lastError(): String = error
+    override fun packetsReceived(): Long = received.get()
+
+    override fun destroy() {
+        stop()
+        AndroidProcess.killProcess(AndroidProcess.myPid())
+    }
 }
 '''
+
 uinput = r'''package com.tomastharwat.nintendo_nes
+
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStream
+
 class UinputGamepad(private val output: OutputStream) {
- companion object {
-  private const val ID = 1
-  private const val SET_EV = 100
-  private const val SET_KEY = 101
-  private const val SET_ABS = 103
-  private const val EV_KEY = 1
-  private const val EV_ABS = 3
-  private const val BTN_A = 304
-  private const val BTN_B = 305
-  private const val BTN_SELECT = 314
-  private const val BTN_START = 315
-  private const val HAT_X = 16
-  private const val HAT_Y = 17
- }
- private val line = StringBuilder(256)
- private var previous = -1
- fun register() {
-  val config = JSONArray().apply {
-   put(cfg(SET_EV, listOf(EV_KEY, EV_ABS)))
-   put(cfg(SET_KEY, listOf(BTN_A, BTN_B, BTN_SELECT, BTN_START)))
-   put(cfg(SET_ABS, listOf(HAT_X, HAT_Y)))
-  }
-  val axes = JSONArray().apply { put(axis(HAT_X)); put(axis(HAT_Y)) }
-  write(JSONObject().apply {
-   put("id", ID); put("command", "register"); put("name", "Xbox 360 Controller")
-   put("vid", 0x045e); put("pid", 0x028e); put("bus", "usb")
-   put("configuration", config); put("abs_info", axes)
-  })
-  write(JSONObject().apply { put("id", ID); put("command", "delay"); put("duration", 300) })
- }
- @Synchronized fun setMask(mask: Int) {
-  val state = mask and 0xff
-  if (state == previous) return
-  val events = ArrayList<Int>(18)
-  fun add(t: Int, c: Int, v: Int) { events.add(t); events.add(c); events.add(v) }
-  for ((bit, key) in listOf(1 to BTN_A, 2 to BTN_B, 4 to BTN_SELECT, 8 to BTN_START)) {
-   val old = previous >= 0 && (previous and bit) != 0
-   val now = (state and bit) != 0
-   if (previous < 0 || old != now) add(EV_KEY, key, if (now) 1 else 0)
-  }
-  // Compensate for the receiver TV's reversed horizontal HAT mapping: right must move right.
-  val x = (if ((state and 64) != 0) 1 else 0) + (if ((state and 128) != 0) -1 else 0)
-  val y = (if ((state and 16) != 0) -1 else 0) + (if ((state and 32) != 0) 1 else 0)
-  add(EV_ABS, HAT_X, x.coerceIn(-1, 1)); add(EV_ABS, HAT_Y, y.coerceIn(-1, 1))
-  previous = state; inject(events)
- }
- @Synchronized fun injectNeutral() { previous = -1; setMask(0) }
- private fun inject(events: List<Int>) {
-  if (events.isEmpty()) return
-  line.setLength(0); line.append("""{"id":1,"command":"inject","events":[""")
-  for (i in events.indices step 3) {
-   if (i > 0) line.append(',')
-   line.append(events[i]).append(',').append(events[i + 1]).append(',').append(events[i + 2])
-  }
-  line.append(",0,0,0]}\n")
-  output.write(line.toString().toByteArray(Charsets.UTF_8)); output.flush()
- }
- private fun write(obj: JSONObject) {
-  line.setLength(0); line.append(obj.toString()).append('\n')
-  output.write(line.toString().toByteArray(Charsets.UTF_8)); output.flush()
- }
- private fun cfg(type: Int, values: List<Int>) = JSONObject().apply { put("type", type); put("data", JSONArray(values)) }
- private fun axis(code: Int) = JSONObject().apply {
-  put("code", code); put("info", JSONObject().apply {
-   put("value", 0); put("minimum", -1); put("maximum", 1)
-   put("fuzz", 0); put("flat", 0); put("resolution", 0)
-  })
- }
+    companion object {
+        private const val ID = 1
+        private const val SET_EV = 100
+        private const val SET_KEY = 101
+        private const val SET_ABS = 103
+        private const val EV_KEY = 1
+        private const val EV_ABS = 3
+        private const val BTN_A = 304
+        private const val BTN_B = 305
+        private const val BTN_SELECT = 314
+        private const val BTN_START = 315
+        private const val HAT_X = 16
+        private const val HAT_Y = 17
+    }
+
+    private val line = StringBuilder(256)
+    private var previousMask = -1
+
+    fun register() {
+        val configuration = JSONArray().apply {
+            put(cfg(SET_EV, listOf(EV_KEY, EV_ABS)))
+            put(cfg(SET_KEY, listOf(BTN_A, BTN_B, BTN_SELECT, BTN_START)))
+            put(cfg(SET_ABS, listOf(HAT_X, HAT_Y)))
+        }
+        val axes = JSONArray().apply {
+            put(axis(HAT_X))
+            put(axis(HAT_Y))
+        }
+        write(JSONObject().apply {
+            put("id", ID)
+            put("command", "register")
+            put("name", "Nintendo NES Controller")
+            put("vid", 0x045e)
+            put("pid", 0x028e)
+            put("bus", "usb")
+            put("configuration", configuration)
+            put("abs_info", axes)
+        })
+        write(JSONObject().apply {
+            put("id", ID)
+            put("command", "delay")
+            put("duration", 300)
+        })
+    }
+
+    @Synchronized
+    fun setMask(mask: Int) {
+        val state = mask and 0xff
+        if (state == previousMask) return
+        val events = ArrayList<Int>(18)
+        fun add(type: Int, code: Int, value: Int) {
+            events.add(type)
+            events.add(code)
+            events.add(value)
+        }
+        for ((bit, key) in listOf(1 to BTN_A, 2 to BTN_B, 4 to BTN_SELECT, 8 to BTN_START)) {
+            val old = previousMask >= 0 && (previousMask and bit) != 0
+            val now = (state and bit) != 0
+            if (previousMask < 0 || old != now) add(EV_KEY, key, if (now) 1 else 0)
+        }
+        val x = (if ((state and (1 shl 6)) != 0) -1 else 0) +
+            (if ((state and (1 shl 7)) != 0) 1 else 0)
+        val y = (if ((state and (1 shl 4)) != 0) -1 else 0) +
+            (if ((state and (1 shl 5)) != 0) 1 else 0)
+        add(EV_ABS, HAT_X, x.coerceIn(-1, 1))
+        add(EV_ABS, HAT_Y, y.coerceIn(-1, 1))
+        previousMask = state
+        inject(events)
+    }
+
+    @Synchronized
+    fun injectNeutral() {
+        previousMask = -1
+        setMask(0)
+    }
+
+    private fun inject(events: List<Int>) {
+        if (events.isEmpty()) return
+        line.setLength(0)
+        line.append("""{"id":1,"command":"inject","events":[""")
+        for (i in events.indices step 3) {
+            if (i > 0) line.append(',')
+            line.append(events[i]).append(',')
+                .append(events[i + 1]).append(',')
+                .append(events[i + 2])
+        }
+        line.append(",0,0,0]}\n")
+        output.write(line.toString().toByteArray(Charsets.UTF_8))
+        output.flush()
+    }
+
+    private fun write(obj: JSONObject) {
+        line.setLength(0)
+        line.append(obj.toString()).append('\n')
+        output.write(line.toString().toByteArray(Charsets.UTF_8))
+        output.flush()
+    }
+
+    private fun cfg(type: Int, values: List<Int>) = JSONObject().apply {
+        put("type", type)
+        put("data", JSONArray(values))
+    }
+
+    private fun axis(code: Int) = JSONObject().apply {
+        put("code", code)
+        put("info", JSONObject().apply {
+            put("value", 0)
+            put("minimum", -1)
+            put("maximum", 1)
+            put("fuzz", 0)
+            put("flat", 0)
+            put("resolution", 0)
+        })
+    }
 }
 '''
+
 aidl = r'''package com.tomastharwat.nintendo_nes;
 interface IGamepadService {
- boolean start(int port);
- void setButtons(int mask);
- void stop();
- boolean isRunning();
- String lastError();
- void destroy();
+    boolean start(int port);
+    void setButtons(int mask);
+    void stop();
+    boolean isRunning();
+    String lastError();
+    long packetsReceived();
+    void destroy();
 }
 '''
 def write(path, content):
@@ -390,7 +760,11 @@ provider = '''        <provider
 if "rikka.shizuku.ShizukuProvider" not in xml:
  xml = xml.replace("</application>", provider + "\n    </application>")
 manifest.write_text(xml, encoding="utf-8")
-write(kotlin / "MainActivity.kt", main)
+default_main_activity = kotlin / "MainActivity.kt"
+if default_main_activity.exists():
+    default_main_activity.unlink()
+write(controller_kotlin / "MainActivity.kt", controller_activity)
+write(receiver_kotlin / "MainActivity.kt", main)
 write(kotlin / "GamepadUserService.kt", user_service)
 write(kotlin / "UinputGamepad.kt", uinput)
 write(aidl_dir / "IGamepadService.aidl", aidl)
