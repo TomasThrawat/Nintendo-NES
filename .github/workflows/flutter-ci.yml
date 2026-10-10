@@ -187,12 +187,18 @@ jobs:
                       applicationId = "com.tomastharwat.nintendo_nes"
                       manifestPlaceholders["appName"] = "Nintendo NES Receiver"
                       manifestPlaceholders["appOrientation"] = "landscape"
+                      ndk {
+                          abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
+                      }
                   }
                   create("controller") {
                       dimension = "role"
                       applicationId = "com.tomastharwat.nes_controller"
                       manifestPlaceholders["appName"] = "NES Wi-Fi Controller"
                       manifestPlaceholders["appOrientation"] = "unspecified"
+                      ndk {
+                          abiFilters += setOf("arm64-v8a")
+                      }
                   }
               }
 
