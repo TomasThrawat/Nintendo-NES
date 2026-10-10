@@ -1,25 +1,35 @@
-# NES local Wi-Fi receiver/controller
+# Nintendo NES local Wi-Fi receiver/controller
 
-## Roles
+## Apps and connection flow
 
-- **Receiver APK** runs on the emulator device. It starts/stops a listener, shows IPv4 addresses and UDP port, creates a fresh 16-character pairing code each time it starts, displays live connection state and a volatile accepted-frame count, and routes the NES button mask into the in-process `NesController`.
-- **Controller APK** is a separate second-app entry point containing only receiver IP/code fields and eight NES buttons: Up, Down, Left, Right, A, B, Select, and Start.
-- Like WiFiPad, the controller emits small UDP input datagrams to the receiver at approximately 60 Hz. Unlike WiFiPad's generic gamepad packet, this protocol carries only NES buttons and writes directly into the NES emulator's controller state. It does not use Shizuku or system-wide `uinput`.
+- **Nintendo NES Receiver** starts directly on the receiver screen. Press **Start NES receiver** to listen on UDP port `27191`; the screen shows the receiver's local IPv4 address and connection status.
+- **NES Wi-Fi Controller** asks for the receiver's IPv4 address only. The UDP port is fixed and detected by the app, so no pairing code or second field is required. After a successful receiver acknowledgement, the controller switches to landscape and shows the NES D-pad, A, B, Start, and Select.
+- Both devices must be on the same trusted local Wi-Fi network. The apps communicate directly; no internet service, account, cloud relay, Shizuku, or generic system gamepad injection is used.
 
 ## UDP wire protocol
 
-The receiver listens on UDP port `27191`, matching WiFiPad's default receiver port. Each datagram is exactly 24 bytes: magic (`N`), protocol version, packet type, 32-bit little-endian sequence, 8-bit NES button mask/status, and a 16-byte truncated HMAC-SHA-256. Frames with the wrong size, version, type, pairing-code MAC, or stale sequence are ignored.
+The receiver and controller share `lib/services/remote_protocol.dart`. Every packet is exactly **8 bytes**:
 
-The host issues a signed acknowledgement for accepted frames so the controller can report real receiver reachability. Input sequence checks allow uint32 wraparound while rejecting duplicate/replayed datagrams. The host only accepts one active controller; the first valid authenticated sender becomes the peer. A 750 ms watchdog releases all pressed buttons when frames stop arriving. The sender emits the current button state repeatedly and sends several all-buttons-up frames on disconnect.
+| Byte offset | Size | Meaning |
+|---:|---:|---|
+| 0 | 1 byte | Magic value `0x4e` (`N`) |
+| 1 | 1 byte | Protocol version `2` |
+| 2 | 1 byte | Packet type: `0` input, `1` acknowledgement |
+| 3–6 | 4 bytes | Unsigned 32-bit sequence, little-endian |
+| 7 | 1 byte | NES button mask for input; value `1` for acknowledgement |
 
-The pairing code is generated with a cryptographically secure random source and is replaced each time the receiver starts. Only the code is displayed to the user. The HMAC authenticates input datagrams, and no handshake/account/cloud service is required.
+The button-mask bits follow the controller enum order: A, B, Select, Start, Up, Down, Left, Right. The controller sends current input at approximately 60 Hz and emits several all-buttons-up packets when disconnecting. The receiver rejects malformed packets and duplicate/stale sequence numbers, including across uint32 wraparound. It sends an acknowledgement for accepted input so the controller can verify that the receiver is reachable.
 
-## Network changes and privacy
+The receiver accepts one active peer at a time. A **750 ms** receiver watchdog releases all buttons if input stops; the controller declares the receiver connection lost after approximately **1.5 seconds** without an acknowledgement.
 
-The receiver binds local IPv4 interfaces and offers a refresh button if Wi-Fi changes. Restart the receiver to get a fresh pairing code. The controller can reconnect by re-entering the receiver address/code. IP addresses, current input state, counts, and connection status are held in memory only; there is no persistent network log, analytics, telemetry, cloud, or relay.
+## Security and privacy
 
-The transport authenticates frames and protects integrity but does not encrypt UDP payloads. Use a trusted local Wi-Fi network. The Android manifest requests only `android.permission.INTERNET` for local sockets; it does not request location or Wi-Fi scan permissions.
+This is an intentionally **unauthenticated and unencrypted** IP-only protocol. A device that can send UDP packets to port `27191` on the same network may be able to inject button input while the receiver is listening. Use a trusted local network and do not expose the receiver port to the internet.
 
-## Verification
+Neither app requires a pairing code, account, cloud relay, location permission, or Wi-Fi scanning permission. The Android manifest requests `android.permission.INTERNET` for local sockets. The apps do not persist network input, addresses, or connection logs; controller layout preferences are stored locally.
 
-CI tests fixed-size packets, HMAC tampering, stale sequence rejection, host/client UDP loopback, simultaneous NES input, and input release on disconnect. It builds and inspects both arm64-only APKs. **Two-physical-device Wi-Fi testing is still required before claiming the connection acceptance criterion complete.** Full NES gameplay is also not yet available because PPU rendering, APU audio, and frame scheduling remain incomplete.
+## Verification and limitations
+
+The automated checks cover CPU/cartridge/controller behavior, packet structure and sequence handling, control-layout persistence, UDP loopback between client and receiver, Flutter analysis/tests, dependency/security reporting, and APK metadata/ABI/permission inspection. The receiver APK is built for `armeabi-v7a`, `arm64-v8a`, and `x86_64`; the controller APK is built for `arm64-v8a` only. These checks do not replace testing on two real devices and an actual Android TV.
+
+**Full NES gameplay is not available yet.** The PPU graphics pipeline, APU audio, and frame scheduler are still incomplete; the app currently validates and loads supported ROM data but does not claim playable emulation.

@@ -219,10 +219,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm,android-arm64,android-x64 --no-pub
+          # Build the ARM64-only controller first and preserve its APK before the multi-ABI receiver build.
+          # Flutter/Gradle may otherwise retain ABI intermediates from the first flavor in the next output.
+          mkdir -p ci-apks
           flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --no-pub
-          test -s build/app/outputs/flutter-apk/app-receiver-release.apk
           test -s build/app/outputs/flutter-apk/app-controller-release.apk
+          cp build/app/outputs/flutter-apk/app-controller-release.apk ci-apks/app-controller-release.apk
+
+          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm,android-arm64,android-x64 --no-pub
+          test -s build/app/outputs/flutter-apk/app-receiver-release.apk
+          cp build/app/outputs/flutter-apk/app-receiver-release.apk ci-apks/app-receiver-release.apk
 
       - name: Inspect both APKs
         shell: bash
@@ -256,13 +262,16 @@ jobs:
               assert native, f"{apk_path}: APK has no native shared libraries"
           if role == "receiver":
               expected_abis = {"armeabi-v7a", "arm64-v8a", "x86_64"}
-              assert abis == expected_abis, (
-                  f"{apk_path}: expected multi-ABI receiver {sorted(expected_abis)}, found {sorted(abis)}"
-              )
           else:
-              assert abis == {"arm64-v8a"}, (
-                  f"{apk_path}: controller must remain arm64-v8a only; found {sorted(abis)}"
-              )
+              expected_abis = {"arm64-v8a"}
+          assert abis == expected_abis, (
+              f"{apk_path}: expected ABIs {sorted(expected_abis)}, found {sorted(abis)}"
+          )
+          for abi in expected_abis:
+              for required_library in ("libapp.so", "libflutter.so"):
+                  assert f"lib/{abi}/{required_library}" in native, (
+                      f"{apk_path}: {abi} is missing required Flutter library {required_library}"
+                  )
 
           badging = subprocess.run(
               [aapt, "dump", "badging", apk_path],
@@ -317,15 +326,15 @@ jobs:
           PY
             ls -lh "$apk"
           }
-          inspect_apk "build/app/outputs/flutter-apk/app-receiver-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver
-          inspect_apk "build/app/outputs/flutter-apk/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller" controller
+          inspect_apk "ci-apks/app-receiver-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver
+          inspect_apk "ci-apks/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller" controller
 
       - name: Upload receiver and controller APKs
         uses: actions/upload-artifact@v7
         with:
           name: nintendo-nes-compatible-apps
           path: |
-            build/app/outputs/flutter-apk/app-receiver-release.apk
-            build/app/outputs/flutter-apk/app-controller-release.apk
+            ci-apks/app-receiver-release.apk
+            ci-apks/app-controller-release.apk
           if-no-files-found: error
           retention-days: 14
