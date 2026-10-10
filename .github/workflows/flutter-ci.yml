@@ -126,14 +126,22 @@ jobs:
               feature_name = re.search(r'android:name="([^"]+)"', feature).group(1)
               if f'android:name="{feature_name}"' not in content:
                   content = re.sub(r'(<manifest\b[^>]*>)', r'\1\n' + feature, content, count=1)
-          content, application_count = re.subn(
-              r'(<application\b[^>]*)(>)',
-              r'\1 android:banner="@drawable/tv_banner" android:icon="${appIcon}" android:roundIcon="${appRoundIcon}"\2',
-              content,
-              count=1,
-          )
-          if application_count != 1:
-              raise SystemExit("Could not add the Android TV banner attribute.")
+          application_match = re.search(r'<application\b[^>]*>', content, re.S)
+          if not application_match:
+              raise SystemExit("Could not find the Android application element.")
+
+          application_tag = application_match.group(0)
+          def set_android_attribute(tag, name, value):
+              pattern = r'(\bandroid:' + re.escape(name) + r'=")[^"]*(")'
+              if re.search(pattern, tag):
+                  return re.sub(pattern, lambda match: match.group(1) + value + match.group(2), tag, count=1)
+              return tag[:-1] + ' android:' + name + '="' + value + '">'
+
+          # Replace existing icon values to avoid duplicate XML attributes.
+          application_tag = set_android_attribute(application_tag, "banner", "@drawable/tv_banner")
+          application_tag = set_android_attribute(application_tag, "icon", "${appIcon}")
+          application_tag = set_android_attribute(application_tag, "roundIcon", "${appRoundIcon}")
+          content = content[:application_match.start()] + application_tag + content[application_match.end():]
           activity_match = re.search(r'<activity\b[^>]*android:name="\.MainActivity"[^>]*>', content, re.S)
           if not activity_match:
               raise SystemExit("Could not locate Flutter MainActivity for TV launch configuration.")
