@@ -237,19 +237,52 @@ def write(path, content):
   path.write_text(content, encoding="utf-8")
 
 gradle = Path("android/app/build.gradle.kts")
-if not gradle.is_file(): raise SystemExit("Generated Android Gradle file is missing.")
+if not gradle.is_file():
+    raise SystemExit("Generated Android Gradle file is missing.")
 g = gradle.read_text(encoding="utf-8")
-for dep in ('implementation("dev.rikka.shizuku:api:13.1.5")',
-            'implementation("dev.rikka.shizuku:provider:13.1.5")'):
- if dep not in g: g = re.sub(r'(dependencies\s*\{)', r'\1\n    ' + dep, g, count=1)
-if "aidl = true" not in g:
- m = re.search(r'buildFeatures\s*\{[^}]*\}', g, re.S)
- if m:
-  old_block = m.group(0); g = g[:m.start()] + old_block[:-1] + "\n        aidl = true\n    }" + g[m.end():]
- else:
-  g = re.sub(r'(\n\s*defaultConfig\s*\{)', '\n    buildFeatures {\n        aidl = true\n    }\n\\1', g, count=1)
-gradle.write_text(g, encoding="utf-8")
 
+# Flutter/AGP templates can omit the app-level dependencies block.
+dependencies = (
+    'implementation("dev.rikka.shizuku:api:13.1.5")',
+    'implementation("dev.rikka.shizuku:provider:13.1.5")',
+)
+missing = [dependency for dependency in dependencies if dependency not in g]
+if missing:
+    match = re.search(r'dependencies\s*\{', g)
+    lines = "".join("    " + dependency + "\n" for dependency in missing)
+    if match:
+        g = g[:match.end()] + "\n" + lines + g[match.end():]
+    else:
+        g = g.rstrip() + "\n\ndependencies {\n" + lines + "}\n"
+
+# AIDL generates IGamepadService.Stub; BuildConfig.APPLICATION_ID is referenced
+# in MainActivity. Modern Android Gradle Plugin templates may disable both.
+features = ("aidl", "buildConfig")
+match = re.search(r'buildFeatures\s*\{[^}]*\}', g, re.S)
+if match:
+    block = match.group(0)
+    replacement = block[:-1]
+    for feature in features:
+        if re.search(r'^\s*' + re.escape(feature) + r'\s*=\s*true\s*$', block, re.M) is None:
+            replacement += "\n        " + feature + " = true"
+    replacement += "\n    }"
+    g = g[:match.start()] + replacement + g[match.end():]
+else:
+    android = re.search(r'android\s*\{', g)
+    if not android:
+        raise SystemExit("Could not find the Android Gradle configuration block.")
+    block = "\n    buildFeatures {\n        aidl = true\n        buildConfig = true\n    }\n"
+    g = g[:android.end()] + block + g[android.end():]
+
+for dependency in dependencies:
+    if dependency not in g:
+        raise SystemExit("Required Shizuku dependency is missing: " + dependency)
+for feature in features:
+    if re.search(r'^\s*' + re.escape(feature) + r'\s*=\s*true\s*$', g, re.M) is None:
+        raise SystemExit("Required Android build feature is disabled: " + feature)
+
+gradle.write_text(g, encoding="utf-8")
+print("Configured Shizuku dependencies, AIDL generation, and BuildConfig.")
 manifest = root / "AndroidManifest.xml"
 xml = manifest.read_text(encoding="utf-8")
 if "moe.shizuku.privileged.api" not in xml:

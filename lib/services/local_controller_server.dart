@@ -74,7 +74,7 @@ class LocalControllerServer {
       _socket?.close();
       _socket = null;
       if (nativeStarted) {
-        try { await SystemGamepadBridge.stop(); } on Object { }
+        try { await SystemGamepadBridge.stop(); } on Object { /* Best-effort cleanup; preserve the original startup error. */ }
       }
       onStatusChanged(error is SocketException
           ? 'Could not open the local Wi-Fi UDP port.'

@@ -85,10 +85,12 @@ class _RemoteScreenState extends State<RemoteScreen> {
     setState(() => _busy = true);
     try {
       await _server.start();
-      if (mounted) setState(() {
-        _addresses = _server.addresses;
-        _received = _server.inputsReceived;
-      });
+      if (mounted) {
+        setState(() {
+          _addresses = _server.addresses;
+          _received = _server.inputsReceived;
+        });
+      }
     } on Object catch (error) {
       if (mounted) _showError(error.toString());
     } finally {
@@ -133,11 +135,13 @@ class _RemoteScreenState extends State<RemoteScreen> {
         DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight,
       ]);
       final saved = await ControlLayoutStore.load();
-      if (mounted) setState(() {
-        _placements = saved;
-        _editing = false;
-        _status = 'Connected to gamepad receiver';
-      });
+      if (mounted) {
+        setState(() {
+          _placements = saved;
+          _editing = false;
+          _status = 'Connected to gamepad receiver';
+        });
+      }
     } on Object catch (error) {
       if (mounted) _showError(error.toString());
     } finally {
