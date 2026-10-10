@@ -21,6 +21,6 @@ After a TV reboot, Shizuku usually must be started again but does not need re-pa
 Both devices must share the same trusted Wi-Fi. UDP port `27191` is unauthenticated and unencrypted; never expose it to the internet.
 
 ## CI and limitations
-CI analyzes/tests Flutter, generates the Kotlin/AIDL bridge, builds both APKs, and inspects package IDs, ABIs, TV launcher metadata, and permissions. It keeps dependency constraints unchanged. The reusable workflow is pinned to upstream commit `92cded954be5653a48fada29e926e4a3e4f402b7`. The phone controller is `arm64-v8a` only; the receiver is `armeabi-v7a`, `arm64-v8a`, and `x86_64`.
+CI analyzes/tests Flutter, generates the Kotlin/AIDL bridge, builds three separate APKs, and verifies each APK's exact native ABI alongside package IDs, TV launcher metadata, and permissions. It keeps dependency constraints unchanged. The reusable workflow is pinned to upstream commit `92cded954be5653a48fada29e926e4a3e4f402b7`. The phone controller is `arm64-v8a` only. The Receiver is available as `armeabi-v7a` for 32-bit TVs and `arm64-v8a` for 64-bit TVs. The CI artifact contains all three APKs.
 
 CI cannot test a real TV firmware or game. On the TV, check the device in a gamepad tester, then the intended game. If `uinput` is missing or denied, receiver startup should show an error rather than claim success.

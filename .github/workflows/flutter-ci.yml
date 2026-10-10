@@ -254,24 +254,26 @@ jobs:
       - name: Check whitespace errors
         run: git diff --check
 
-      - name: Build ARM64 Android TV receiver and controller APKs
+      - name: Build ARMv7 and ARM64 Android TV receiver APKs and ARM64 controller
         shell: bash
         run: |
           set -euo pipefail
-          # Build both variants for ARM64 only.
+          # Keep the phone controller arm64-only. Build separate receiver APKs for 32-bit and 64-bit Android TVs.
           # Flutter/Gradle may otherwise retain ABI intermediates from the first flavor in the next output.
           mkdir -p ci-apks
-          # Flutter may emit a fat APK when --target-platform is used without --split-per-abi.
-          # Build ABI splits and keep only the controller's ARM64 APK.
           flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --split-per-abi --no-pub
           test -s build/app/outputs/flutter-apk/app-arm64-v8a-controller-release.apk
           cp build/app/outputs/flutter-apk/app-arm64-v8a-controller-release.apk ci-apks/app-controller-release.apk
 
+          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm --split-per-abi --no-pub
+          test -s build/app/outputs/flutter-apk/app-armeabi-v7a-receiver-release.apk
+          cp build/app/outputs/flutter-apk/app-armeabi-v7a-receiver-release.apk ci-apks/app-receiver-v7a-release.apk
+
           flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm64 --split-per-abi --no-pub
           test -s build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk ci-apks/app-receiver-release.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-receiver-release.apk ci-apks/app-receiver-arm64-v8a-release.apk
 
-      - name: Inspect both APKs
+      - name: Inspect all APKs and validate exact ABI
         shell: bash
         run: |
           set -euo pipefail
@@ -288,22 +290,23 @@ jobs:
             local expected_id="$2"
             local expected_label="$3"
             local role="$4"
+            local expected_abi="$5"
             test -s "$apk"
-            python3 - "$apk" "$expected_id" "$expected_label" "$aapt" "$role" <<'PY'
+            python3 - "$apk" "$expected_id" "$expected_label" "$aapt" "$role" "$expected_abi" <<'PY'
           import re
           import subprocess
           import sys
           import zipfile
 
-          apk_path, expected_id, expected_label, aapt, role = sys.argv[1:]
+          apk_path, expected_id, expected_label, aapt, role, expected_abi = sys.argv[1:]
           with zipfile.ZipFile(apk_path) as archive:
               names = archive.namelist()
               native = [n for n in names if n.startswith("lib/") and n.endswith(".so")]
               abis = {n.split("/")[1] for n in native}
               assert native, f"{apk_path}: APK has no native shared libraries"
-          expected_abis = {"arm64-v8a"}
+          expected_abis = {expected_abi}
           assert abis == expected_abis, (
-              f"{apk_path}: expected ABIs {sorted(expected_abis)}, found {sorted(abis)}"
+              f"{apk_path}: expected ABI {expected_abi}, found {sorted(abis)}"
           )
           for abi in expected_abis:
               for required_library in ("libapp.so", "libflutter.so"):
@@ -364,15 +367,17 @@ jobs:
           PY
             ls -lh "$apk"
           }
-          inspect_apk "ci-apks/app-receiver-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver
-          inspect_apk "ci-apks/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller" controller
+          inspect_apk "ci-apks/app-receiver-v7a-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver armeabi-v7a
+          inspect_apk "ci-apks/app-receiver-arm64-v8a-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver arm64-v8a
+          inspect_apk "ci-apks/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller" controller arm64-v8a
 
       - name: Upload receiver and controller APKs
         uses: actions/upload-artifact@v7
         with:
           name: nintendo-nes-compatible-apps
           path: |
-            ci-apks/app-receiver-release.apk
+            ci-apks/app-receiver-v7a-release.apk
+            ci-apks/app-receiver-arm64-v8a-release.apk
             ci-apks/app-controller-release.apk
             assets/controller_icon.svg
             assets/controller_launcher_icon.xml
