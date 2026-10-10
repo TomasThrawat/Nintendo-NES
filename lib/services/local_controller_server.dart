@@ -4,8 +4,8 @@ import 'dart:io';
 import '../core/controller/nes_controller.dart';
 import 'remote_protocol.dart';
 
-/// WiFiPad-style UDP receiver: accepts fixed-size, authenticated NES input
-/// packets at approximately 60 Hz and routes them into the NES controller port.
+/// WiFiPad-style IP-only UDP receiver for fixed-size NES input frames.
+/// Keep this port on a trusted local network because packets are unauthenticated.
 class LocalControllerServer {
   LocalControllerServer({
     required this.onButtonsChanged,
@@ -21,7 +21,6 @@ class LocalControllerServer {
 
   RawDatagramSocket? _socket;
   Timer? _watchdog;
-  String? _pairCode;
   InternetAddress? _peerAddress;
   int? _peerPort;
   int _lastSequence = -1;
@@ -33,7 +32,6 @@ class LocalControllerServer {
 
   bool get isListening => _socket != null;
   bool get isConnected => _peerAddress != null;
-  String? get pairingCode => _pairCode;
   int get boundPort => _socket?.port ?? port;
   int get inputsReceived => _inputsReceived;
 
@@ -41,7 +39,6 @@ class LocalControllerServer {
     if (_socket != null) {
       return;
     }
-    _pairCode = newPairingCode();
     _inputsReceived = 0;
     _lastSequence = -1;
     onInputCountChanged?.call(0);
@@ -80,7 +77,6 @@ class LocalControllerServer {
     } on SocketException {
       _socket?.close();
       _socket = null;
-      _pairCode = null;
       onStatusChanged('Could not open the local Wi-Fi UDP port.');
       rethrow;
     }
@@ -92,7 +88,6 @@ class LocalControllerServer {
     _dropPeer(status: 'Receiver stopped');
     _socket?.close();
     _socket = null;
-    _pairCode = null;
     addresses = const <String>[];
     _inputsReceived = 0;
     _lastSequence = -1;
@@ -116,10 +111,8 @@ class LocalControllerServer {
   }
 
   void _handleDatagram(Datagram datagram) {
-    final code = _pairCode;
-    if (code == null ||
-        !isNesInputPacket(datagram.data) ||
-        !isValidNesDatagram(datagram.data, code)) {
+    if (!isNesInputPacket(datagram.data) ||
+        !isValidNesDatagram(datagram.data)) {
       return;
     }
 
@@ -155,7 +148,7 @@ class LocalControllerServer {
 
     // A signed ACK allows the controller app to show real receiver reachability.
     _socket?.send(
-      encodeNesAckPacket(sequence: sequence, pairingCode: code),
+      encodeNesAckPacket(sequence: sequence),
       datagram.address,
       datagram.port,
     );

@@ -117,7 +117,67 @@ jobs:
           if 'android.permission.INTERNET' not in content:
               raise SystemExit("Missing INTERNET permission needed for local UDP.")
           content = content.replace("__APP_NAME_PLACEHOLDER__", "${appName}")
+          features = [
+              '    <uses-feature android:name="android.software.leanback" android:required="false" />',
+              '    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />',
+              '    <uses-feature android:name="android.hardware.faketouch" android:required="false" />',
+          ]
+          for feature in features:
+              feature_name = re.search(r'android:name="([^"]+)"', feature).group(1)
+              if f'android:name="{feature_name}"' not in content:
+                  content = re.sub(r'(<manifest\\b[^>]*>)', r'\\1\\n' + feature, content, count=1)
+          content, application_count = re.subn(
+              r'(<application\\b[^>]*)(>)',
+              r'\\1 android:banner="@drawable/tv_banner"\\2',
+              content,
+              count=1,
+          )
+          if application_count != 1:
+              raise SystemExit("Could not add the Android TV banner attribute.")
+          activity_match = re.search(r'<activity\\b[^>]*android:name="\\.MainActivity"[^>]*>', content, re.S)
+          if not activity_match:
+              raise SystemExit("Could not locate Flutter MainActivity for TV launch configuration.")
+          activity_tag = activity_match.group(0)
+          if "android:screenOrientation=" not in activity_tag:
+              changed_tag = activity_tag[:-1] + ' android:screenOrientation="${appOrientation}">'
+              content = content.replace(activity_tag, changed_tag, 1)
+          activity_match = re.search(
+              r'(<activity\\b[^>]*android:name="\\.MainActivity"[^>]*>[\\s\\S]*?</activity>)',
+              content,
+              re.S,
+          )
+          if not activity_match:
+              raise SystemExit("Could not inspect Flutter MainActivity intent filters.")
+          activity_block = activity_match.group(1)
+          if "android.intent.category.LEANBACK_LAUNCHER" not in activity_block:
+              activity_block, category_count = re.subn(
+                  r'(<category\\b[^>]*android:name="android\\.intent\\.category\\.LAUNCHER"[^>]*/>)',
+                  r'\\1\\n                    <category android:name="android.intent.category.LEANBACK_LAUNCHER" />',
+                  activity_block,
+                  count=1,
+              )
+              if category_count != 1:
+                  raise SystemExit("Could not add LEANBACK_LAUNCHER to MainActivity.")
+              content = content.replace(activity_match.group(1), activity_block, 1)
           manifest.write_text(content)
+
+          banner = Path("android/app/src/main/res/drawable/tv_banner.xml")
+          banner.parent.mkdir(parents=True, exist_ok=True)
+          banner.write_text("""<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="320dp"
+              android:height="180dp"
+              android:viewportWidth="320"
+              android:viewportHeight="180">
+              <path android:fillColor="#000000" android:pathData="M0,0h320v180h-320z" />
+              <path android:fillColor="#FFFFFF" android:pathData="M42,75 C42,55 58,43 78,43 L141,43 C155,43 168,53 174,69 L186,69 C192,53 205,43 219,43 L242,43 C262,43 278,59 278,79 L278,115 C278,133 257,143 243,129 L214,101 L106,101 L77,129 C63,143 42,133 42,115 Z" />
+              <path android:fillColor="#000000" android:pathData="M62,71h12v34h-12z M51,82h34v12h-34z" />
+              <path android:fillColor="#000000" android:pathData="M225,70a9,9 0,1 0,18 0a9,9 0,1 0,-18 0 M244,91a9,9 0,1 0,18 0a9,9 0,1 0,-18 0" />
+          </vector>
+          """, encoding="utf-8")
+
+          gradle = Path("android/app/build.gradle.kts")
+          source = gradle.read_text()
 
           gradle = Path("android/app/build.gradle.kts")
           source = gradle.read_text()
@@ -129,11 +189,13 @@ jobs:
                       dimension = "role"
                       applicationId = "com.tomastharwat.nintendo_nes"
                       manifestPlaceholders["appName"] = "Nintendo NES Receiver"
+                      manifestPlaceholders["appOrientation"] = "landscape"
                   }
                   create("controller") {
                       dimension = "role"
                       applicationId = "com.tomastharwat.nes_controller"
                       manifestPlaceholders["appName"] = "NES Wi-Fi Controller"
+                      manifestPlaceholders["appOrientation"] = "unspecified"
                   }
               }
 
@@ -156,11 +218,11 @@ jobs:
       - name: Check whitespace errors
         run: git diff --check
 
-      - name: Build receiver and controller arm64 APKs
+      - name: Build multi-ABI Android TV receiver and arm64 controller APKs
         shell: bash
         run: |
           set -euo pipefail
-          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm64 --no-pub
+          flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm,android-arm64,android-x64 --no-pub
           flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --no-pub
           test -s build/app/outputs/flutter-apk/app-receiver-release.apk
           test -s build/app/outputs/flutter-apk/app-controller-release.apk
@@ -181,21 +243,29 @@ jobs:
             local apk="$1"
             local expected_id="$2"
             local expected_label="$3"
+            local role="$4"
             test -s "$apk"
-            python3 - "$apk" "$expected_id" "$expected_label" "$aapt" <<'PY'
+            python3 - "$apk" "$expected_id" "$expected_label" "$aapt" "$role" <<'PY'
           import re
           import subprocess
           import sys
           import zipfile
 
-          apk_path, expected_id, expected_label, aapt = sys.argv[1:]
+          apk_path, expected_id, expected_label, aapt, role = sys.argv[1:]
           with zipfile.ZipFile(apk_path) as archive:
               names = archive.namelist()
-              native = sorted(n for n in names if n.startswith("lib/") and n.endswith(".so"))
+              native = [n for n in names if n.startswith("lib/") and n.endswith(".so")]
+              abis = {n.split("/")[1] for n in native}
               assert native, f"{apk_path}: APK has no native shared libraries"
-              wrong = [n for n in native if not n.startswith("lib/arm64-v8a/")]
-              assert not wrong, f"{apk_path}: unexpected native ABIs {wrong}"
-              assert any(n.startswith("lib/arm64-v8a/") for n in native), f"{apk_path}: missing arm64-v8a libraries"
+          if role == "receiver":
+              expected_abis = {"armeabi-v7a", "arm64-v8a", "x86_64"}
+              assert abis == expected_abis, (
+                  f"{apk_path}: expected multi-ABI receiver {sorted(expected_abis)}, found {sorted(abis)}"
+              )
+          else:
+              assert abis == {"arm64-v8a"}, (
+                  f"{apk_path}: controller must remain arm64-v8a only; found {sorted(abis)}"
+              )
 
           badging = subprocess.run(
               [aapt, "dump", "badging", apk_path],
@@ -229,22 +299,34 @@ jobs:
               assert forbidden not in permissions, (
                   f"{apk_path}: unnecessary permission present: {forbidden}"
               )
+          if role == "receiver":
+              xmltree = subprocess.run(
+                  [aapt, "dump", "xmltree", apk_path, "AndroidManifest.xml"],
+                  check=True,
+                  text=True,
+                  capture_output=True,
+              ).stdout
+              assert "android.intent.category.LEANBACK_LAUNCHER" in xmltree, (
+                  f"{apk_path}: Android TV Leanback launcher category is missing"
+              )
+              assert "android.software.leanback" in xmltree, (
+                  f"{apk_path}: optional Android TV Leanback feature is missing"
+              )
           print(
-              f"Verified {apk_path}: package={expected_id}, "
-              f"label={expected_label}, ABI=arm64-v8a only"
+              f"Verified {apk_path}: package={expected_id}, label={expected_label}, ABIs={sorted(abis)}"
           )
           print("Merged APK permissions:")
           print(permissions.strip())
           PY
             ls -lh "$apk"
           }
-          inspect_apk "build/app/outputs/flutter-apk/app-receiver-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver"
-          inspect_apk "build/app/outputs/flutter-apk/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller"
+          inspect_apk "build/app/outputs/flutter-apk/app-receiver-release.apk" "com.tomastharwat.nintendo_nes" "Nintendo NES Receiver" receiver
+          inspect_apk "build/app/outputs/flutter-apk/app-controller-release.apk" "com.tomastharwat.nes_controller" "NES Wi-Fi Controller" controller
 
       - name: Upload receiver and controller APKs
         uses: actions/upload-artifact@v7
         with:
-          name: nintendo-nes-arm64-apps
+          name: nintendo-nes-compatible-apps
           path: |
             build/app/outputs/flutter-apk/app-receiver-release.apk
             build/app/outputs/flutter-apk/app-controller-release.apk

@@ -4,10 +4,10 @@ An independent Flutter + Dart NES/Famicom emulator project, separate from WiFiPa
 
 ## Two-app layout
 
-- **Nintendo NES Receiver** runs on the emulator device. It imports a legally obtained .nes ROM and opens the receiver page, displaying the IPv4 address, UDP port, pairing code, connection state, and accepted input-frame count.
-- **NES Wi-Fi Controller** is a separate controller-only app for the second device. Its UI contains only the receiver address/code form and NES D-pad, A, B, Start, and Select controls. It has no receiver mode or generic gamepad layout.
+- **Nintendo NES Receiver** opens directly to a Wi-Fi receiver screen, with one **Start NES receiver** button. It displays the device IP after starting, the connection state, and received input-frame count. Loading a legally obtained .nes ROM remains optional.
+- **NES Wi-Fi Controller** asks for only the receiver IP. After a successful connection it rotates to landscape and displays only the NES D-pad, A, B, Start, and Select controls. Every button can be dragged, resized, or hidden independently; the layout is saved between launches.
 
-The connection follows WiFiPad's local Wi-Fi UDP model: the controller sends compact input datagrams at approximately 60 Hz to the receiver. The important difference is that the payload contains only the eight NES buttons and is routed directly to the emulator's in-process controller port, rather than injecting a general Android gamepad through Shizuku/uinput. A temporary pairing code and HMAC authenticate the datagrams.
+The connection follows WiFiPad's direct local Wi-Fi UDP model: the controller sends compact input datagrams at approximately 60 Hz to the receiver. The payload contains only the eight NES buttons and is routed directly to the emulator's in-process controller port, rather than injecting a general Android gamepad through Shizuku/uinput. The controller uses the fixed receiver port automatically; no pairing code is required.
 
 ## Current emulator milestone
 
@@ -17,29 +17,30 @@ The connection follows WiFiPad's local Wi-Fi UDP model: the controller sends com
 - NES controller serial strobe/read behavior with simultaneous button presses.
 - .nes file picker through Flutter's maintained `file_selector` plugin.
 - Pure-black Flutter UI for the receiver and dedicated controller.
-- UDP controller packets at ~60 Hz, temporary pairing code, HMAC-authenticated frames and acknowledgements, fixed-size payload validation, sequence/replay checks, receiver reachability acknowledgements, 750 ms failsafe, and button release on disconnect.
+- IP-only fixed-size UDP controller packets at ~60 Hz, sequence/replay checks, receiver reachability acknowledgements, a 750 ms failsafe, and button release on disconnect.
+- A WiFiPad-style landscape controller with per-button drag positioning, size and visibility settings saved locally.
 - Unit tests for CPU/cartridge/controller/protocol behavior, UDP host/client loopback integration, and both Flutter app screens.
 
 **Not playable yet.** PPU graphics, nametable/palette/sprite rendering, vblank/NMI timing integration, APU audio, and frame scheduling are missing. The app reports that limitation rather than faking gameplay. NROM is the only executable mapper; other mapper IDs are rejected.
 
 ## Pairing on local Wi-Fi
 
-1. Install **Nintendo NES Receiver** on the emulator device and open **NES Receiver**.
-2. Start the receiver. The screen displays its IPv4 address, UDP port, and one-session pairing code.
-3. Install **NES Wi-Fi Controller** on the second device, enter the receiver address and pairing code, then connect.
-4. Hold the NES buttons. The receiver displays connection state and a non-persistent input-frame counter. Disconnect or stop the receiver to release all buttons.
+1. Install **Nintendo NES Receiver** on the TV/host device and press **Start NES receiver**.
+2. Copy its displayed IPv4 address.
+3. Open **NES Wi-Fi Controller** on the second device, enter only that IP address, and connect.
+4. The controller automatically rotates to landscape. Drag buttons or use **Edit controls** to customize positions, size, and visibility; changes are saved. Disconnect or stop the receiver to release all buttons.
 
-Both devices must share local Wi-Fi. Internet, accounts, cloud relays, and Shizuku are not required. HMAC protects integrity but the payload is not encrypted, so use a trusted local network. The loopback integration test does not replace the required test on two physical Android devices.
+Both devices must share the same trusted local Wi-Fi. Internet, accounts, cloud relays, Shizuku, and a pairing code are not required. To match WiFiPad's simple IP-only flow, input datagrams are not cryptographically authenticated; anyone with access to the same local network could send button input while the receiver is listening. Do not expose the receiver port to the internet. Loopback tests do not replace tests on two physical Android devices and a real Android TV.
 
 ## CI builds
 
 Analysis, tests, coverage and security auditing use the reusable workflow pinned to the full commit SHA `92cded954be5653a48fada29e926e4a3e4f402b7` that the upstream README explicitly documents for the enhanced reusable workflow ([source commit](https://github.com/TomasThrawat/hyouka-flutter-workflows/commit/92cded954be5653a48fada29e926e4a3e4f402b7)). A separate local job is retained for building the two Android product flavors because the shared workflow's standard build path creates a single APK. The pinned reusable workflow calls `scripts/ci_enhancements.py` for its warning and quality reports, so that dependency-free helper and its upstream unit tests are vendored from the same documented commit and tested before building. Dependency/outdated reports are informational; CI does not upgrade declared package constraints.
 
-GitHub Actions builds and inspects two arm64-only APKs:
-- `app-receiver-release.apk` — package `com.tomastharwat.nintendo_nes`
-- `app-controller-release.apk` — package `com.tomastharwat.nes_controller`
+GitHub Actions builds and inspects two APKs:
+- `app-receiver-release.apk` — package `com.tomastharwat.nintendo_nes`, bundled for `armeabi-v7a`, `arm64-v8a`, and `x86_64`; Android TV Leanback launcher metadata is included.
+- `app-controller-release.apk` — package `com.tomastharwat.nes_controller`, still `arm64-v8a` only.
 
-The CI verifies both APKs' ABI, package ID, launcher label, and local-network permissions. Download both from the workflow artifact. Successful build output is not proof of playable NES compatibility.
+The CI verifies APK ABI sets, package IDs, launcher labels, receiver Leanback metadata, and local-network permissions. Download both from the workflow artifact. Successful build output is not proof of playable NES compatibility.
 
 ## Next emulator milestones
 

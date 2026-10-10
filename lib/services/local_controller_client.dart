@@ -13,7 +13,6 @@ class LocalControllerClient {
   Completer<void>? _firstAck;
   void Function(String)? _onStatus;
   void Function(Set<NesButton>)? _onButtons;
-  String _code = '';
   int _targetPort = nesWifiPort;
   int _sequence = 0;
   int _lastAckSequence = -1;
@@ -28,22 +27,16 @@ class LocalControllerClient {
 
   Future<void> connect({
     required String host,
-    required String pairingCode,
     required void Function(Set<NesButton>) onButtonsChanged,
     required void Function(String) onStatusChanged,
     int port = nesWifiPort,
   }) async {
     await disconnect();
-    final code = normalizedPairingCode(pairingCode);
-    if (!isPairingCode(code)) {
-      throw const FormatException('Enter the full 16-character pairing code.');
-    }
     final address = InternetAddress.tryParse(host.trim());
     if (address == null || address.type != InternetAddressType.IPv4) {
       throw const FormatException('Enter the receiver IPv4 address.');
     }
 
-    _code = code;
     _targetAddress = address;
     _targetPort = port;
     _onButtons = onButtonsChanged;
@@ -91,7 +84,7 @@ class LocalControllerClient {
       await firstAck.future.timeout(
         const Duration(seconds: 3),
         onTimeout: () => throw const SocketException(
-          'No receiver response. Check both Wi-Fi devices, the IP address, and pairing code.',
+          'No receiver response. Check both devices are on the same Wi-Fi and verify the IP address.',
         ),
       );
     } on Object {
@@ -128,7 +121,6 @@ class LocalControllerClient {
     _socket = null;
     socket?.close();
     _targetAddress = null;
-    _code = '';
     _lastAckSequence = -1;
     _onButtons?.call(const <NesButton>{});
     _notify('Disconnected');
@@ -147,7 +139,6 @@ class LocalControllerClient {
         encodeNesInputPacket(
           sequence: _sequence,
           mask: _mask,
-          pairingCode: _code,
         ),
         target,
         _targetPort,
@@ -173,7 +164,7 @@ class LocalControllerClient {
       if (datagram.address.address != target.address ||
           datagram.port != _targetPort ||
           !isNesAckPacket(datagram.data) ||
-          !isValidNesDatagram(datagram.data, _code)) {
+          !isValidNesDatagram(datagram.data)) {
         continue;
       }
       final sequence = readNesSequence(datagram.data);
