@@ -453,7 +453,7 @@ class GamepadUserService : IGamepadService.Stub() {
         synchronized(inputLock) {
             if (!running.get()) return@synchronized
             val now = System.nanoTime()
-            val samePeer = peerAddress?.address == sender.address && peerPort == senderPort
+            val samePeer = peerAddress?.hostAddress == sender.hostAddress && peerPort == senderPort
             if (peerAddress != null && !samePeer) {
                 if (now - lastPacketNanos <= FAILSAFE_TIMEOUT_NANOS) return@synchronized
                 device.setMask(0)
