@@ -116,6 +116,13 @@ class GamepadDirectionTests(unittest.TestCase):
   self.assertIn("fun injectNeutral()",bridge)
 
 
+ def test_receiver_activity_callbacks_have_explicit_property_types(self):
+  source=Path(__file__).with_name("prepare_android_gamepad.py").read_text(encoding="utf-8")
+  main=source.split("main = r'''",1)[1].split("\n'''",1)[0]
+  self.assertIn("private val bindTimeout: Runnable = Runnable {",main)
+  self.assertIn("private val connection: ServiceConnection = object : ServiceConnection {",main)
+
+
 class QualityTests(unittest.TestCase):
  def test_coverage_gate_fails_below_threshold(self):
   with tempfile.TemporaryDirectory() as d:

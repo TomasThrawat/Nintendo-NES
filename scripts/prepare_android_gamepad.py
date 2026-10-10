@@ -43,7 +43,7 @@ class MainActivity : Activity() {
     private lateinit var statusView: TextView
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    private val bindTimeout = Runnable {
+    private val bindTimeout: Runnable = Runnable {
         if (binding && service == null) {
             binding = false
             startRequested = false
@@ -76,7 +76,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private val connection = object : ServiceConnection {
+    private val connection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
             mainHandler.removeCallbacks(bindTimeout)
             binding = false
