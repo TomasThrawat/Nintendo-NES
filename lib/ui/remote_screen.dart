@@ -32,6 +32,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
   List<String> _addresses = const <String>[];
   int _inputsReceived = 0;
   bool _busy = false;
+  bool _disposing = false;
 
   bool get _isHost => widget.mode == RemoteMode.host;
 
@@ -41,12 +42,12 @@ class _RemoteScreenState extends State<RemoteScreen> {
     _server = LocalControllerServer(
       onButtonsChanged: widget.hostController.setButtons,
       onStatusChanged: (status) {
-        if (mounted) {
+        if (mounted && !_disposing) {
           setState(() => _status = status);
         }
       },
       onInputCountChanged: (count) {
-        if (mounted) {
+        if (mounted && !_disposing) {
           setState(() => _inputsReceived = count);
         }
       },
@@ -59,6 +60,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
 
   @override
   void dispose() {
+    _disposing = true;
     _server.stop();
     _client.disconnect();
     _hostInput.dispose();
@@ -127,7 +129,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
         pairingCode: _codeInput.text,
         onButtonsChanged: (_) {},
         onStatusChanged: (status) {
-          if (mounted) {
+          if (mounted && !_disposing) {
             setState(() {
               _status = status;
               if (status != 'Connected') {
