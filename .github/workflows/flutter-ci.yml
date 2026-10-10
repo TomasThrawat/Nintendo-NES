@@ -203,7 +203,7 @@ jobs:
                       manifestPlaceholders["appName"] = "Nintendo NES Receiver"
                       manifestPlaceholders["appOrientation"] = "landscape"
                       manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
-                      manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher_round"
+                      manifestPlaceholders["appRoundIcon"] = "@mipmap/ic_launcher"
                   }
                   create("controller") {
                       dimension = "role"
