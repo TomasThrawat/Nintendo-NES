@@ -187,18 +187,12 @@ jobs:
                       applicationId = "com.tomastharwat.nintendo_nes"
                       manifestPlaceholders["appName"] = "Nintendo NES Receiver"
                       manifestPlaceholders["appOrientation"] = "landscape"
-                      ndk {
-                          abiFilters += setOf("armeabi-v7a", "arm64-v8a", "x86_64")
-                      }
                   }
                   create("controller") {
                       dimension = "role"
                       applicationId = "com.tomastharwat.nes_controller"
                       manifestPlaceholders["appName"] = "NES Wi-Fi Controller"
                       manifestPlaceholders["appOrientation"] = "unspecified"
-                      ndk {
-                          abiFilters += setOf("arm64-v8a")
-                      }
                   }
               }
 
@@ -228,9 +222,11 @@ jobs:
           # Build the ARM64-only controller first and preserve its APK before the multi-ABI receiver build.
           # Flutter/Gradle may otherwise retain ABI intermediates from the first flavor in the next output.
           mkdir -p ci-apks
-          flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --no-pub
-          test -s build/app/outputs/flutter-apk/app-controller-release.apk
-          cp build/app/outputs/flutter-apk/app-controller-release.apk ci-apks/app-controller-release.apk
+          # Flutter may emit a fat APK when --target-platform is used without --split-per-abi.
+          # Build ABI splits and keep only the controller's ARM64 APK.
+          flutter build apk --release --flavor controller --target lib/controller_main.dart --target-platform android-arm64 --split-per-abi --no-pub
+          test -s build/app/outputs/flutter-apk/app-arm64-v8a-controller-release.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-controller-release.apk ci-apks/app-controller-release.apk
 
           flutter build apk --release --flavor receiver --target lib/main.dart --target-platform android-arm,android-arm64,android-x64 --no-pub
           test -s build/app/outputs/flutter-apk/app-receiver-release.apk
