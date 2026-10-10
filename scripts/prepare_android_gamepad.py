@@ -114,7 +114,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setPadding(dp(20), dp(20), dp(20), dp(20))
         }
-        val startButton = Button(this).apply {
+        val startButton: Button = Button(this).apply {
             text = "Start"
             isAllCaps = false
             textSize = 20f
@@ -126,7 +126,7 @@ class MainActivity : Activity() {
             }
             setOnClickListener { requestShizuku() }
         }
-        val stopButton = Button(this).apply {
+        val stopButton: Button = Button(this).apply {
             text = "Stop"
             isAllCaps = false
             textSize = 20f
