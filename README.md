@@ -18,6 +18,9 @@ A regular Android app cannot inject gamepad events into other apps merely by rec
 
 After a TV reboot, Shizuku usually must be started again but does not need re-pairing. No root, PC, cloud relay, or Shizuku on the phone is required.
 
+## Receiver diagnostics
+The Receiver writes a detailed log to Downloads/Nintendo NES Receiver/receiver.log on Android 10 and newer. The log includes Shizuku permission checks, binding callbacks and timeouts, binder/service state, uinput process output, UDP startup/errors, controller connection changes, and stack traces. The UI shows the log destination. On Android 9 and older, grant storage permission when requested; if public Downloads is not available, the app records to its private files directory and reports that fallback destination. The log is reset when an existing file exceeds approximately 5 MiB.
+
 Both devices must share the same trusted Wi-Fi. UDP port `27191` is unauthenticated and unencrypted; never expose it to the internet.
 
 ## CI and limitations

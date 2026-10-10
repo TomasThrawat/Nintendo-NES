@@ -9,7 +9,225 @@ receiver_kotlin = Path("android/app/src/receiver/kotlin/com/tomastharwat/nintend
 controller_kotlin = Path("android/app/src/controller/kotlin/com/tomastharwat/nintendo_nes")
 aidl_dir = root / "aidl/com/tomastharwat/nintendo_nes"
 
-main = r'''package com.tomastharwat.nintendo_nes
+receiver_logger = r'''
+package com.tomastharwat.nintendo_nes
+
+import android.content.ContentValues
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.util.Log
+import java.io.BufferedWriter
+import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.nio.charset.StandardCharsets
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+object ReceiverLogger {
+    private const val TAG = "NintendoNESReceiver"
+    private const val FILE_NAME = "receiver.log"
+    private const val FOLDER_NAME = "Nintendo NES Receiver"
+    private const val MAX_LOG_BYTES = 5L * 1024L * 1024L
+    private val lock = Any()
+    private val timestampFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS Z", Locale.US)
+    @Volatile private var writer: BufferedWriter? = null
+    @Volatile private var target = "not initialized"
+    private var appContext: Context? = null
+
+    fun initialize(context: Context) {
+        synchronized(lock) {
+            appContext = context.applicationContext
+            if (writer != null) return
+            val publicWriter = try { openPublicDownloadsWriter(context.applicationContext) }
+            catch (error: Exception) { Log.e(TAG, "Could not open the public Downloads log file", error); null }
+            if (publicWriter != null) {
+                writer = publicWriter
+                target = "Downloads/" + FOLDER_NAME + "/" + FILE_NAME
+            } else {
+                openInternalWriter(context.applicationContext)
+            }
+            writeLineLocked("INFO", "Logger initialized; destination=" + target +
+                "; sdk=" + Build.VERSION.SDK_INT)
+        }
+    }
+
+    fun reinitialize(context: Context) {
+        synchronized(lock) {
+            val app = context.applicationContext
+            val internal = File(app.filesDir, FILE_NAME)
+            val previous = try { if (internal.isFile) internal.readText(Charsets.UTF_8) else "" }
+                catch (_: Exception) { "" }
+            try { writer?.flush(); writer?.close() }
+            catch (error: Exception) { Log.e(TAG, "Could not close old log writer", error) }
+            writer = null
+            target = "not initialized"
+            appContext = app
+            val publicWriter = try { openPublicDownloadsWriter(app) }
+                catch (error: Exception) { Log.e(TAG, "Could not switch log destination to Downloads", error); null }
+            if (publicWriter != null) {
+                writer = publicWriter
+                target = "Downloads/" + FOLDER_NAME + "/" + FILE_NAME
+                if (previous.isNotBlank()) {
+                    try {
+                        writer?.write("----- migrated internal diagnostic log -----\n")
+                        writer?.write(previous)
+                        if (!previous.endsWith("\n")) writer?.newLine()
+                        writer?.flush()
+                        internal.delete()
+                    } catch (error: Exception) {
+                        Log.e(TAG, "Could not migrate internal diagnostics into Downloads", error)
+                    }
+                }
+            } else {
+                openInternalWriter(app)
+            }
+            writeLineLocked("INFO", "Log destination refreshed; destination=" + target)
+        }
+    }
+
+    fun log(level: String, message: String, error: Throwable? = null) {
+        synchronized(lock) {
+            if (writer == null) {
+                val context = appContext
+                if (context != null) initialize(context)
+            }
+            writeLineLocked(level, message, error)
+        }
+    }
+
+    fun destinationLabel(): String = target
+
+    private fun openPublicDownloadsWriter(context: Context): BufferedWriter? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+            val relativePath = Environment.DIRECTORY_DOWNLOADS + "/" + FOLDER_NAME + "/"
+            val projection = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.SIZE)
+            val cursor = resolver.query(
+                collection, projection,
+                MediaStore.MediaColumns.DISPLAY_NAME + "=? AND " + MediaStore.MediaColumns.RELATIVE_PATH + "=?",
+                arrayOf(FILE_NAME, relativePath), null
+            )
+            var uri: android.net.Uri? = null
+            var size = 0L
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val id = it.getLong(it.getColumnIndexOrThrow(MediaStore.MediaColumns._ID))
+                    val sizeColumn = it.getColumnIndex(MediaStore.MediaColumns.SIZE)
+                    size = if (sizeColumn >= 0) it.getLong(sizeColumn) else 0L
+                    uri = android.content.ContentUris.withAppendedId(collection, id)
+                }
+            }
+            var created = false
+            if (uri == null) {
+                val values = ContentValues().apply {
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, FILE_NAME)
+                    put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+                uri = resolver.insert(collection, values)
+                    ?: throw IllegalStateException("MediaStore could not create Downloads/" + FOLDER_NAME + "/" + FILE_NAME)
+                created = true
+                size = 0L
+            }
+            val mode = if (size > MAX_LOG_BYTES) "wt" else "wa"
+            val stream = resolver.openOutputStream(uri!!, mode)
+                ?: throw IllegalStateException("MediaStore could not open the Receiver log for writing")
+            if (created) resolver.update(uri!!, ContentValues().apply {
+                put(MediaStore.MediaColumns.IS_PENDING, 0)
+            }, null, null)
+            if (size > MAX_LOG_BYTES) {
+                stream.write(("----- previous log exceeded " + MAX_LOG_BYTES + " bytes; started a new log -----\n")
+                    .toByteArray(StandardCharsets.UTF_8))
+            }
+            return BufferedWriter(OutputStreamWriter(stream, StandardCharsets.UTF_8))
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            context.checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) return null
+
+        @Suppress("DEPRECATION")
+        val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        val directory = File(downloads, FOLDER_NAME)
+        if (!directory.isDirectory && !directory.mkdirs()) {
+            throw IllegalStateException("Could not create Downloads/" + FOLDER_NAME)
+        }
+        val file = File(directory, FILE_NAME)
+        val append = file.isFile && file.length() <= MAX_LOG_BYTES
+        val stream = FileOutputStream(file, append)
+        if (!append && file.length() == 0L) {
+            stream.write(("----- previous log exceeded " + MAX_LOG_BYTES + " bytes; started a new log -----\n")
+                .toByteArray(StandardCharsets.UTF_8))
+        }
+        return BufferedWriter(OutputStreamWriter(stream, StandardCharsets.UTF_8))
+    }
+
+    private fun openInternalWriter(context: Context) {
+        val file = File(context.filesDir, FILE_NAME)
+        try {
+            val append = file.isFile && file.length() <= MAX_LOG_BYTES
+            writer = BufferedWriter(OutputStreamWriter(FileOutputStream(file, append), StandardCharsets.UTF_8))
+            target = "internal app storage/receiver.log (Downloads is unavailable)"
+            writeLineLocked("WARN", "Public Downloads logging unavailable; using " + file.absolutePath)
+        } catch (error: Exception) {
+            writer = null
+            target = "Log file unavailable; see Android Logcat"
+            Log.e(TAG, "Could not open internal diagnostic log", error)
+        }
+    }
+
+    private fun writeLineLocked(level: String, message: String, error: Throwable? = null) {
+        val now = timestampFormat.format(Date())
+        val entry = now + " [" + level + "] [thread=" + Thread.currentThread().name + "] " + message
+        val priority = when (level.uppercase(Locale.US)) {
+            "ERROR" -> Log.ERROR
+            "WARN", "WARNING" -> Log.WARN
+            "DEBUG" -> Log.DEBUG
+            else -> Log.INFO
+        }
+        Log.println(priority, TAG, entry)
+        val current = writer ?: return
+        try {
+            current.write(entry)
+            current.newLine()
+            if (error != null) {
+                val stack = Log.getStackTraceString(error).replace("\r", "")
+                current.write(stack)
+                if (!stack.endsWith("\n")) current.newLine()
+                Log.e(TAG, message, error)
+            }
+            current.flush()
+        } catch (writeError: Exception) {
+            Log.e(TAG, "Writing diagnostic log failed; destination=" + target, writeError)
+            try { current.close() } catch (_: Exception) { }
+            writer = null
+            val context = appContext
+            if (context != null) {
+                openInternalWriter(context)
+                val fallback = writer
+                try {
+                    fallback?.write(entry)
+                    fallback?.newLine()
+                    if (error != null) fallback?.write(Log.getStackTraceString(error) + "\n")
+                    fallback?.flush()
+                } catch (fallbackError: Exception) {
+                    Log.e(TAG, "Fallback diagnostic log write failed", fallbackError)
+                }
+            }
+        }
+    }
+}
+'''
+
+main = r'''
+package com.tomastharwat.nintendo_nes
 
 import android.app.Activity
 import android.content.ComponentName
@@ -18,6 +236,7 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
@@ -29,30 +248,34 @@ import android.widget.TextView
 import rikka.shizuku.Shizuku
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     companion object {
-        private const val REQUEST = 9001
+        private const val REQUEST_SHIZUKU = 9001
+        private const val REQUEST_DOWNLOADS_PERMISSION = 9002
         private const val PORT = 27191
+        private const val BIND_TIMEOUT_MS = 20000L
+        private const val START_TIMEOUT_MS = 25000L
     }
 
-    private var service: IGamepadService? = null
+    @Volatile private var service: IGamepadService? = null
     private var bound = false
     private var binding = false
     private var startRequested = false
+    private var startInFlight = false
+    private var statusCheckInFlight = false
+    private var permissionCheckInFlight = false
+    private var bindAttemptId = 0
+    private var startAttemptId = 0
+    private var bindTimeout: Runnable? = null
+    private var startTimeout: Runnable? = null
+    private var lastUiStatus = ""
+    private var lastIpError = ""
     private lateinit var statusView: TextView
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val bindTimeout: Runnable = Runnable {
-        if (binding && service == null) {
-            binding = false
-            startRequested = false
-            statusView.text = "No response from Shizuku. Check Shizuku and permission, then press Start again."
-            if (bound) {
-                try { Shizuku.unbindUserService(userServiceArgs, connection, false) } catch (_: Exception) { }
-                bound = false
-            }
-        }
+    private val ioExecutor = Executors.newCachedThreadPool { task ->
+        Thread(task, "nes-shizuku-io").apply { isDaemon = true }
     }
 
     private val statusTicker = object : Runnable {
@@ -64,36 +287,71 @@ class MainActivity : Activity() {
 
     private val userServiceArgs = Shizuku.UserServiceArgs(
         ComponentName(BuildConfig.APPLICATION_ID, GamepadUserService::class.java.name)
-    ).daemon(false).processNameSuffix("gamepad").debuggable(false).version(2)
+    ).daemon(false).processNameSuffix("gamepad").debuggable(false).version(3)
 
     private val permissionListener = Shizuku.OnRequestPermissionResultListener { code, grant ->
-        if (code == REQUEST) {
-            if (grant == PackageManager.PERMISSION_GRANTED) bindReceiver()
-            else {
-                startRequested = false
-                statusView.text = "Shizuku permission was denied. Grant permission and press Start again."
+        mainHandler.post {
+            ReceiverLogger.log(
+                if (grant == PackageManager.PERMISSION_GRANTED) "INFO" else "ERROR",
+                "Shizuku permission callback: requestCode=" + code + " grantResult=" + grant
+            )
+            if (code == REQUEST_SHIZUKU) {
+                if (grant == PackageManager.PERMISSION_GRANTED) {
+                    bindReceiver()
+                } else {
+                    startRequested = false
+                    showStatus(statusText("Shizuku permission denied. Grant permission in Shizuku, then press Start."),
+                        "ERROR")
+                }
             }
         }
     }
 
     private val connection: ServiceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            mainHandler.removeCallbacks(bindTimeout)
-            binding = false
-            service = IGamepadService.Stub.asInterface(binder)
-            if (startRequested) startReceiver() else refreshStatus()
+            ReceiverLogger.log(
+                "INFO",
+                "ServiceConnection.onServiceConnected component=" + name +
+                    " binderAlive=" + binder.isBinderAlive + " binderPing=" + binder.pingBinder()
+            )
+            mainHandler.post {
+                bindTimeout?.let { mainHandler.removeCallbacks(it) }
+                bindTimeout = null
+                binding = false
+                bound = true
+                service = IGamepadService.Stub.asInterface(binder)
+                ReceiverLogger.log("INFO", "AIDL IGamepadService proxy created; startRequested=" + startRequested)
+                if (startRequested) startReceiver() else refreshStatus()
+            }
         }
 
         override fun onServiceDisconnected(name: ComponentName) {
-            mainHandler.removeCallbacks(bindTimeout)
-            binding = false
-            service = null
-            statusView.text = "Shizuku service disconnected. Press Start to reconnect."
+            ReceiverLogger.log("ERROR", "ServiceConnection.onServiceDisconnected component=" + name)
+            mainHandler.post { markServiceLost("Shizuku service disconnected. Press Start to reconnect.") }
+        }
+
+        override fun onBindingDied(name: ComponentName) {
+            ReceiverLogger.log("ERROR", "ServiceConnection.onBindingDied component=" + name)
+            mainHandler.post { markServiceLost("Shizuku binding died. Restart Shizuku on the TV, then press Start.") }
+        }
+
+        override fun onNullBinding(name: ComponentName) {
+            ReceiverLogger.log("ERROR", "ServiceConnection.onNullBinding component=" + name)
+            mainHandler.post { markServiceLost("Shizuku returned an empty service binding. Check Shizuku and app permissions.") }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ReceiverLogger.initialize(this)
+        ReceiverLogger.log(
+            "INFO",
+            "Activity onCreate; package=" + packageName + " versionCode=" + BuildConfig.VERSION_CODE +
+                " sdk=" + Build.VERSION.SDK_INT + " manufacturer=" + Build.MANUFACTURER +
+                " model=" + Build.MODEL + " release=" + Build.VERSION.RELEASE +
+                " process=" + android.os.Process.myPid()
+        )
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -109,10 +367,10 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
         }
         statusView = TextView(this).apply {
-            textSize = 20f
+            textSize = 18f
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setPadding(dp(16), dp(16), dp(16), dp(16))
         }
         val startButton: Button = Button(this).apply {
             text = "Start"
@@ -121,10 +379,11 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             backgroundTintList = ColorStateList.valueOf(Color.rgb(45, 45, 45))
             isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(0, dp(64), 1f).apply {
-                marginEnd = dp(8)
+            layoutParams = LinearLayout.LayoutParams(0, dp(64), 1f).apply { marginEnd = dp(8) }
+            setOnClickListener {
+                ReceiverLogger.log("INFO", "Start button clicked")
+                requestShizuku()
             }
-            setOnClickListener { requestShizuku() }
         }
         val stopButton: Button = Button(this).apply {
             text = "Stop"
@@ -133,10 +392,11 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             backgroundTintList = ColorStateList.valueOf(Color.rgb(75, 25, 25))
             isFocusable = true
-            layoutParams = LinearLayout.LayoutParams(0, dp(64), 1f).apply {
-                marginStart = dp(8)
+            layoutParams = LinearLayout.LayoutParams(0, dp(64), 1f).apply { marginStart = dp(8) }
+            setOnClickListener {
+                ReceiverLogger.log("INFO", "Stop button clicked")
+                stopReceiver()
             }
-            setOnClickListener { stopReceiver() }
         }
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -144,123 +404,352 @@ class MainActivity : Activity() {
             addView(startButton)
             addView(stopButton)
         }
-        root.addView(title, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(72)
-        ))
-        root.addView(statusView, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        root.addView(actions, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, dp(72)
-        ))
+        root.addView(title, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(72)))
+        root.addView(statusView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+        root.addView(actions, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(72)))
         setContentView(root)
         startButton.requestFocus()
 
         Shizuku.addRequestPermissionResultListener(permissionListener)
+        ReceiverLogger.log("INFO", "Registered Shizuku permission result listener; process started")
         refreshStatus()
         mainHandler.postDelayed(statusTicker, 1000)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ReceiverLogger.log("WARN", "Legacy Android requires WRITE_EXTERNAL_STORAGE to save logs in public Downloads; requesting it.")
+            requestPermissions(
+                arrayOf(android.Manifest.permission.WRITE_EXTERNAL_STORAGE),
+                REQUEST_DOWNLOADS_PERMISSION
+            )
+        }
     }
 
     private fun requestShizuku() {
-        if (service?.isRunning() == true) {
-            refreshStatus()
+        if (binding) {
+            ReceiverLogger.log("WARN", "Start tapped while a Shizuku bind is already pending; duplicate request ignored")
+            showStatus(statusText("Already connecting to Shizuku. Waiting for its callback or timeout."))
             return
         }
-        if (!Shizuku.pingBinder()) {
-            statusView.text = "Shizuku is not connected. Start Shizuku on the TV, then try again."
+        if (startInFlight) {
+            ReceiverLogger.log("WARN", "Start tapped while receiver startup is already running; duplicate request ignored")
             return
         }
-        if (Shizuku.isPreV11()) {
-            statusView.text = "Shizuku is outdated. Update Shizuku on the TV."
+        if (service != null) {
+            ReceiverLogger.log("INFO", "A service proxy already exists; verifying/starting receiver off the UI thread")
+            startRequested = true
+            startReceiver()
             return
         }
-        when {
-            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED -> bindReceiver()
-            Shizuku.shouldShowRequestPermissionRationale() ->
-                statusView.text = "Shizuku permission was denied before. Grant it in Shizuku, then press Start."
-            else -> Shizuku.requestPermission(REQUEST)
+        if (permissionCheckInFlight) {
+            ReceiverLogger.log("WARN", "Shizuku state check already in progress; duplicate request ignored")
+            return
+        }
+        permissionCheckInFlight = true
+        showStatus(statusText("Checking Shizuku connection..."))
+        ioExecutor.execute {
+            try {
+                ReceiverLogger.log("INFO", "Checking Shizuku binder")
+                val ping = Shizuku.pingBinder()
+                ReceiverLogger.log("INFO", "Shizuku.pingBinder()=" + ping)
+                val isOld = if (ping) Shizuku.isPreV11() else false
+                ReceiverLogger.log("INFO", "Shizuku.isPreV11()=" + isOld)
+                val granted = if (ping && !isOld) {
+                    Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+                } else false
+                val rationale = if (ping && !isOld && !granted) {
+                    Shizuku.shouldShowRequestPermissionRationale()
+                } else false
+                ReceiverLogger.log(
+                    "INFO",
+                    "Shizuku check completed: binder=" + ping + " oldVersion=" + isOld +
+                        " permissionGranted=" + granted + " shouldShowRationale=" + rationale
+                )
+                mainHandler.post {
+                    permissionCheckInFlight = false
+                    when {
+                        !ping -> showStatus(statusText("Shizuku is not connected. Start Shizuku on the TV, then press Start."), "ERROR")
+                        isOld -> showStatus(statusText("Shizuku is outdated. Update Shizuku on the TV."), "ERROR")
+                        granted -> bindReceiver()
+                        rationale -> showStatus(statusText("Shizuku permission was denied before. Grant it in Shizuku, then press Start."), "WARN")
+                        else -> {
+                            showStatus(statusText("Requesting Shizuku permission..."))
+                            try {
+                                ReceiverLogger.log("INFO", "Calling Shizuku.requestPermission(requestCode=" + REQUEST_SHIZUKU + ")")
+                                Shizuku.requestPermission(REQUEST_SHIZUKU)
+                            } catch (error: Exception) {
+                                ReceiverLogger.log("ERROR", "Shizuku.requestPermission threw", error)
+                                showStatus(statusText("Could not request Shizuku permission: " +
+                                    (error.message ?: error.javaClass.simpleName)), "ERROR")
+                            }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                ReceiverLogger.log("ERROR", "Exception while checking Shizuku binder/permission state", error)
+                mainHandler.post {
+                    permissionCheckInFlight = false
+                    showStatus(statusText("Shizuku check failed: " +
+                        (error.message ?: error.javaClass.simpleName)), "ERROR")
+                }
+            }
         }
     }
 
     private fun bindReceiver() {
         if (service != null) {
+            ReceiverLogger.log("INFO", "bindReceiver skipped because service proxy already exists")
             startReceiver()
             return
         }
-        if (binding) return
+        if (binding) {
+            ReceiverLogger.log("WARN", "bindReceiver ignored because binding is already true")
+            return
+        }
         binding = true
         bound = true
         startRequested = true
-        statusView.text = "Connecting to Shizuku..."
-        mainHandler.removeCallbacks(bindTimeout)
-        mainHandler.postDelayed(bindTimeout, 12000)
-        try {
-            Shizuku.bindUserService(userServiceArgs, connection)
-        } catch (e: Exception) {
-            mainHandler.removeCallbacks(bindTimeout)
-            binding = false
-            bound = false
-            startRequested = false
-            statusView.text = "Could not bind Shizuku service: " + (e.message ?: "unknown error")
+        bindAttemptId += 1
+        val thisAttempt = bindAttemptId
+        showStatus(statusText("Connecting to Shizuku..."))
+        ReceiverLogger.log(
+            "INFO",
+            "Starting Shizuku bind attempt=" + thisAttempt + " timeoutMs=" + BIND_TIMEOUT_MS +
+                " component=" + userServiceArgs.componentName
+        )
+        bindTimeout?.let { mainHandler.removeCallbacks(it) }
+        val timeout = Runnable {
+            if (binding && service == null && bindAttemptId == thisAttempt) {
+                ReceiverLogger.log("ERROR", "Shizuku bind timed out after " + BIND_TIMEOUT_MS +
+                    " ms; no onServiceConnected callback received")
+                binding = false
+                startRequested = false
+                val shouldUnbind = bound
+                bound = false
+                showStatus(
+                    statusText("Timed out waiting for Shizuku service binding. Check that Shizuku is Started, grant this app permission, and press Start again."),
+                    "ERROR"
+                )
+                if (shouldUnbind) ioExecutor.execute {
+                    try {
+                        ReceiverLogger.log("INFO", "Unbinding timed-out Shizuku attempt=" + thisAttempt)
+                        Shizuku.unbindUserService(userServiceArgs, connection, false)
+                        ReceiverLogger.log("INFO", "Timed-out Shizuku binding unbind request returned")
+                    } catch (error: Exception) {
+                        ReceiverLogger.log("ERROR", "Unbind after Shizuku bind timeout failed", error)
+                    }
+                }
+            }
+        }
+        bindTimeout = timeout
+        mainHandler.postDelayed(timeout, BIND_TIMEOUT_MS)
+
+        ioExecutor.execute {
+            try {
+                ReceiverLogger.log("INFO", "Calling Shizuku.bindUserService on background thread")
+                Shizuku.bindUserService(userServiceArgs, connection)
+                ReceiverLogger.log("INFO", "Shizuku.bindUserService returned normally; waiting for onServiceConnected")
+            } catch (error: Exception) {
+                ReceiverLogger.log("ERROR", "Shizuku.bindUserService threw", error)
+                mainHandler.post {
+                    if (thisAttempt != bindAttemptId) return@post
+                    bindTimeout?.let { mainHandler.removeCallbacks(it) }
+                    bindTimeout = null
+                    binding = false
+                    bound = false
+                    startRequested = false
+                    showStatus(statusText("Could not bind Shizuku service: " +
+                        (error.message ?: error.javaClass.simpleName)), "ERROR")
+                }
+                try {
+                    Shizuku.unbindUserService(userServiceArgs, connection, false)
+                } catch (unbindError: Exception) {
+                    ReceiverLogger.log("WARN", "Cleanup after bind exception also failed", unbindError)
+                }
+            }
         }
     }
 
     private fun startReceiver() {
-        mainHandler.removeCallbacks(bindTimeout)
-        binding = false
-        startRequested = false
         val current = service
         if (current == null) {
-            statusView.text = "Shizuku connected without a service binder. Press Start to retry."
+            ReceiverLogger.log("ERROR", "startReceiver called with no service binder")
+            showStatus(statusText("Shizuku connected without a service binder. Press Start to retry."), "ERROR")
             return
         }
-        try {
-            if (!current.isRunning() && !current.start(PORT)) {
-                val detail = current.lastError()
-                statusView.text = "Receiver startup failed: " +
-                    if (detail.isNullOrBlank()) "TV could not register the virtual gamepad." else detail
-            } else {
-                refreshStatus()
+        if (startInFlight) {
+            ReceiverLogger.log("WARN", "startReceiver ignored because a start attempt is already in progress")
+            return
+        }
+        startRequested = false
+        startInFlight = true
+        startAttemptId += 1
+        val thisAttempt = startAttemptId
+        showStatus(statusText("Shizuku connected. Starting virtual gamepad..."))
+        ReceiverLogger.log("INFO", "Receiver start attempt=" + thisAttempt + " beginning on background thread; port=" + PORT)
+        startTimeout?.let { mainHandler.removeCallbacks(it) }
+        val timeout = Runnable {
+            if (startInFlight && startAttemptId == thisAttempt) {
+                startInFlight = false
+                ReceiverLogger.log("ERROR", "Receiver startup Binder call exceeded " + START_TIMEOUT_MS + " ms")
+                showStatus(
+                    statusText("Receiver startup timed out while communicating with Shizuku. Check the log file and restart Shizuku."),
+                    "ERROR"
+                )
             }
-        } catch (e: Exception) {
-            statusView.text = "Receiver startup failed: " + (e.message ?: e.javaClass.simpleName)
+        }
+        startTimeout = timeout
+        mainHandler.postDelayed(timeout, START_TIMEOUT_MS)
+
+        ioExecutor.execute {
+            try {
+                val wasRunning = current.isRunning()
+                ReceiverLogger.log("INFO", "Remote service isRunning()=" + wasRunning)
+                val started = if (wasRunning) true else current.start(PORT)
+                ReceiverLogger.log("INFO", "Remote service start(" + PORT + ") returned=" + started)
+                val detail = current.lastError()
+                val packets = current.packetsReceived()
+                val remoteLog = current.drainLogs()
+                mainHandler.post {
+                    if (thisAttempt != startAttemptId) return@post
+                    startTimeout?.let { mainHandler.removeCallbacks(it) }
+                    startTimeout = null
+                    startInFlight = false
+                    appendServiceLog(remoteLog)
+                    if (started) {
+                        ReceiverLogger.log("INFO", "Receiver start completed; packetsReceived=" + packets)
+                        refreshStatus()
+                    } else {
+                        val reason = if (detail.isNullOrBlank()) "TV could not register the virtual gamepad." else detail
+                        ReceiverLogger.log("ERROR", "Receiver start failed: " + reason)
+                        showStatus(statusText("Receiver startup failed: " + reason), "ERROR")
+                    }
+                }
+            } catch (error: Exception) {
+                ReceiverLogger.log("ERROR", "Remote call failed during receiver startup", error)
+                mainHandler.post {
+                    if (thisAttempt != startAttemptId) return@post
+                    startTimeout?.let { mainHandler.removeCallbacks(it) }
+                    startTimeout = null
+                    startInFlight = false
+                    showStatus(statusText("Receiver startup failed: " +
+                        (error.message ?: error.javaClass.simpleName)), "ERROR")
+                }
+            }
         }
     }
 
     private fun stopReceiver() {
         startRequested = false
-        mainHandler.removeCallbacks(bindTimeout)
-        try {
-            service?.stop()
-        } catch (e: Exception) {
-            statusView.text = "Could not stop receiver: " + (e.message ?: "unknown error")
+        startTimeout?.let { mainHandler.removeCallbacks(it) }
+        startTimeout = null
+        val current = service
+        if (current == null) {
+            ReceiverLogger.log("INFO", "Stop requested while no Shizuku service was bound")
+            showStatus(statusText("Receiver stopped. Press Start to reconnect."))
             return
         }
-        refreshStatus()
+        showStatus(statusText("Stopping receiver..."))
+        ioExecutor.execute {
+            try {
+                current.stop()
+                ReceiverLogger.log("INFO", "Remote receiver stop() completed")
+                val remoteLog = current.drainLogs()
+                mainHandler.post {
+                    appendServiceLog(remoteLog)
+                    showStatus(statusText("Receiver stopped. Press Start to restart."))
+                }
+            } catch (error: Exception) {
+                ReceiverLogger.log("ERROR", "Remote receiver stop() failed", error)
+                mainHandler.post {
+                    showStatus(statusText("Could not stop receiver: " +
+                        (error.message ?: error.javaClass.simpleName)), "ERROR")
+                }
+            }
+        }
     }
 
     private fun refreshStatus() {
         if (!::statusView.isInitialized) return
         val ip = localIp()
         val current = service
-        statusView.text = try {
-            when {
-                binding && current == null ->
-                    "IP: " + ip + "    Port: " + PORT + "\nConnecting to Shizuku..."
-                current != null && current.isRunning() ->
-                    "IP: " + ip + "    Port: " + PORT + "\nListening for NES controller\nPackets received: " + current.packetsReceived()
-                current == null ->
-                    "IP: " + ip + "    Port: " + PORT + "\nReady. Press Start."
-                else -> {
-                    val detail = current.lastError()
-                    "IP: " + ip + "    Port: " + PORT + "\nNot running. " +
-                        if (detail.isNullOrBlank()) "Press Start to start the receiver." else detail
+        if (current == null) {
+            val detail = when {
+                binding -> "Connecting to Shizuku..."
+                permissionCheckInFlight -> "Checking Shizuku connection..."
+                startInFlight -> "Starting virtual gamepad..."
+                else -> "Ready. Press Start."
+            }
+            showStatus(statusText(detail, ip))
+            return
+        }
+        if (statusCheckInFlight || startInFlight) return
+        statusCheckInFlight = true
+        ioExecutor.execute {
+            try {
+                val running = current.isRunning()
+                val packets = current.packetsReceived()
+                val errorText = current.lastError()
+                val remoteLog = current.drainLogs()
+                mainHandler.post {
+                    statusCheckInFlight = false
+                    if (service !== current) {
+                        appendServiceLog(remoteLog)
+                        return@post
+                    }
+                    appendServiceLog(remoteLog)
+                    if (startInFlight) return@post
+                    val detail = when {
+                        running -> "Listening for NES controller\nPackets received: " + packets
+                        !errorText.isNullOrBlank() -> "Not running. " + errorText
+                        else -> "Not running. Press Start to start the receiver."
+                    }
+                    showStatus(statusText(detail, ip), if (running) "INFO" else "WARN")
+                }
+            } catch (error: Exception) {
+                ReceiverLogger.log("ERROR", "Periodic Shizuku/service status query failed", error)
+                mainHandler.post {
+                    statusCheckInFlight = false
+                    if (service === current) markServiceLost("Shizuku service call failed. Restart Shizuku, then press Start.")
                 }
             }
-        } catch (e: Exception) {
-            service = null
-            "Shizuku service disconnected. Press Start to reconnect.\n" + (e.message ?: "")
         }
+    }
+
+    private fun appendServiceLog(contents: String) {
+        if (contents.isBlank()) return
+        contents.lineSequence().filter { it.isNotBlank() }.forEach {
+            ReceiverLogger.log("SERVICE", it)
+        }
+    }
+
+    private fun markServiceLost(message: String) {
+        bindTimeout?.let { mainHandler.removeCallbacks(it) }
+        bindTimeout = null
+        startTimeout?.let { mainHandler.removeCallbacks(it) }
+        startTimeout = null
+        binding = false
+        bound = false
+        startRequested = false
+        startInFlight = false
+        service = null
+        ReceiverLogger.log("ERROR", message)
+        showStatus(statusText(message), "ERROR")
+    }
+
+    private fun statusText(detail: String, ip: String = localIp()): String =
+        "IP: " + ip + "    Port: " + PORT + "\n" + detail +
+            "\nLogs: " + ReceiverLogger.destinationLabel()
+
+    private fun showStatus(message: String, level: String = "INFO") {
+        if (!::statusView.isInitialized) return
+        if (lastUiStatus != message) {
+            ReceiverLogger.log(level, "UI status changed: " + message.replace("\n", " | "))
+            lastUiStatus = message
+        }
+        statusView.text = message
     }
 
     private fun localIp(): String {
@@ -287,7 +776,12 @@ class MainActivity : Activity() {
                 }
             }
             candidates.sortedBy { it.first }.firstOrNull()?.second ?: "unknown"
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            val description = error.javaClass.simpleName + ": " + (error.message ?: "")
+            if (description != lastIpError) {
+                lastIpError = description
+                ReceiverLogger.log("ERROR", "Could not discover a local IPv4 address", error)
+            }
             "unknown"
         }
     }
@@ -295,18 +789,62 @@ class MainActivity : Activity() {
     private fun dp(value: Int): Int =
         (value * resources.displayMetrics.density).toInt()
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQUEST_DOWNLOADS_PERMISSION) {
+            val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
+            ReceiverLogger.log(if (granted) "INFO" else "WARN", "Legacy Downloads permission result granted=" + granted)
+            if (granted) ReceiverLogger.reinitialize(this)
+            refreshStatus()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        ReceiverLogger.log("INFO", "Activity onResume")
+    }
+
+    override fun onPause() {
+        ReceiverLogger.log("INFO", "Activity onPause")
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        ReceiverLogger.log("INFO", "Activity onDestroy; cleaning up service binding")
         mainHandler.removeCallbacksAndMessages(null)
         Shizuku.removeRequestPermissionResultListener(permissionListener)
-        try { service?.stop() } catch (_: Exception) { }
-        if (bound) {
-            try { Shizuku.unbindUserService(userServiceArgs, connection, true) } catch (_: Exception) { }
-            bound = false
+        val current = service
+        val wasBound = bound
+        service = null
+        bound = false
+        binding = false
+        if (current != null || wasBound) {
+            ioExecutor.execute {
+                try {
+                    current?.stop()
+                    ReceiverLogger.log("INFO", "onDestroy service stop completed")
+                } catch (error: Exception) {
+                    ReceiverLogger.log("ERROR", "onDestroy service stop failed", error)
+                }
+                if (wasBound) {
+                    try {
+                        Shizuku.unbindUserService(userServiceArgs, connection, true)
+                        ReceiverLogger.log("INFO", "onDestroy unbind completed")
+                    } catch (error: Exception) {
+                        ReceiverLogger.log("WARN", "onDestroy unbind failed", error)
+                    }
+                }
+            }
         }
         super.onDestroy()
     }
 }
 '''
+
 
 controller_activity = r'''package com.tomastharwat.nintendo_nes
 
@@ -318,6 +856,8 @@ class MainActivity : FlutterActivity()
 user_service = r'''package com.tomastharwat.nintendo_nes
 
 import android.os.Process as AndroidProcess
+import android.util.Log
+import java.util.ArrayDeque
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -348,41 +888,80 @@ class GamepadUserService : IGamepadService.Stub() {
     private var peerPort = -1
     private var lastSequence = -1L
     @Volatile private var lastPacketNanos = 0L
+    private var lastLoggedMask = -1
+    private val diagnosticLock = Any()
+    private val diagnosticLines = ArrayDeque<String>()
+
+    private fun diagnostic(level: String, message: String, error: Throwable? = null) {
+        val stack = error?.let { Log.getStackTraceString(it).replace("\r", "") }
+        val line = System.currentTimeMillis().toString() + " [" + level + "] [thread=" +
+            Thread.currentThread().name + "] " + message + if (stack.isNullOrBlank()) "" else " | " + stack
+        val priority = when (level) {
+            "ERROR" -> Log.ERROR
+            "WARN" -> Log.WARN
+            "DEBUG" -> Log.DEBUG
+            else -> Log.INFO
+        }
+        Log.println(priority, "NESGamepadUserService", line)
+        synchronized(diagnosticLock) {
+            while (diagnosticLines.size >= 256) diagnosticLines.removeFirst()
+            diagnosticLines.addLast(line.take(3000))
+        }
+    }
 
     @Synchronized
     override fun start(port: Int): Boolean {
-        if (running.get() && uinputProcess?.isAlive == true && socket?.isClosed == false) return true
+        diagnostic("INFO", "start(port=" + port + ") called running=" + running.get())
+        if (running.get() && uinputProcess?.isAlive == true && socket?.isClosed == false) {
+            diagnostic("INFO", "start ignored: receiver is already running")
+            return true
+        }
         error = ""
         received.set(0)
         stop()
         var process: Process? = null
         var datagramSocket: DatagramSocket? = null
         return try {
+            diagnostic("INFO", "Launching shell uinput process")
             val runningProcess = ProcessBuilder("uinput", "-").redirectErrorStream(true).start()
             process = runningProcess
             uinputProcess = runningProcess
+            diagnostic("INFO", "uinput process started; alive=" + runningProcess.isAlive)
             Thread({
                 try {
                     runningProcess.inputStream.bufferedReader().forEachLine { line ->
+                        diagnostic(if (line.contains("error", true) || line.contains("fail", true)) "WARN" else "DEBUG",
+                            "uinput output: " + line)
                         if (line.contains("error", true)) error = line.take(300)
                     }
-                } catch (_: Exception) { }
-                val exitCode = try { runningProcess.waitFor() } catch (_: Exception) { -1 }
+                } catch (readError: Exception) {
+                    diagnostic("WARN", "Reading uinput output stream failed", readError)
+                }
+                val exitCode = try { runningProcess.waitFor() } catch (waitError: Exception) {
+                    diagnostic("ERROR", "Waiting for uinput exit code failed", waitError)
+                    -1
+                }
+                diagnostic("WARN", "uinput output stream closed; exitCode=" + exitCode + " running=" + running.get())
                 if (running.get()) {
                     error = "uinput process ended (exit code: " + exitCode + ")"
+                    diagnostic("ERROR", error)
                     stop()
                 }
             }, "nes-uinput-drain").apply { isDaemon = true; start() }
 
+            diagnostic("INFO", "Creating virtual gamepad uinput configuration")
             val device = UinputGamepad(runningProcess.outputStream)
             pad = device
             device.register()
+            diagnostic("INFO", "Virtual gamepad registration commands written; processAlive=" + runningProcess.isAlive)
             device.setMask(0)
+            lastLoggedMask = 0
             if (!runningProcess.isAlive) throw IllegalStateException("uinput exited during registration")
 
             val activeSocket = DatagramSocket(null)
             datagramSocket = activeSocket
             activeSocket.reuseAddress = true
+            diagnostic("INFO", "Binding UDP receiver socket on port=" + port)
             activeSocket.bind(InetSocketAddress(port))
             socket = activeSocket
             synchronized(inputLock) {
@@ -392,6 +971,7 @@ class GamepadUserService : IGamepadService.Stub() {
                 lastPacketNanos = System.nanoTime()
             }
             running.set(true)
+            diagnostic("INFO", "UDP socket bound; starting packet receiver and failsafe threads")
             Thread({ receiveLoop(activeSocket, device) }, "nes-udp-receiver").apply {
                 isDaemon = true
                 priority = Thread.MAX_PRIORITY
@@ -401,14 +981,16 @@ class GamepadUserService : IGamepadService.Stub() {
                 isDaemon = true
                 start()
             }
+            diagnostic("INFO", "Receiver started successfully on UDP port=" + port)
             true
         } catch (e: Exception) {
-            error = e.message ?: "Could not start the NES receiver."
+            error = e.javaClass.simpleName + ": " + (e.message ?: "Could not start the NES receiver.")
+            diagnostic("ERROR", "Receiver startup failed: " + error, e)
             running.set(false)
-            try { datagramSocket?.close() } catch (_: Exception) { }
-            try { pad?.injectNeutral() } catch (_: Exception) { }
-            try { process?.outputStream?.close() } catch (_: Exception) { }
-            try { process?.destroy() } catch (_: Exception) { }
+            try { datagramSocket?.close() } catch (closeError: Exception) { diagnostic("WARN", "Closing failed startup socket threw", closeError) }
+            try { pad?.injectNeutral() } catch (neutralError: Exception) { diagnostic("WARN", "Neutralizing failed startup gamepad threw", neutralError) }
+            try { process?.outputStream?.close() } catch (closeError: Exception) { diagnostic("WARN", "Closing failed startup uinput stream threw", closeError) }
+            try { process?.destroy() } catch (destroyError: Exception) { diagnostic("WARN", "Destroying failed startup uinput process threw", destroyError) }
             socket = null
             uinputProcess = null
             pad = null
@@ -417,6 +999,7 @@ class GamepadUserService : IGamepadService.Stub() {
     }
 
     private fun receiveLoop(sock: DatagramSocket, device: UinputGamepad) {
+        diagnostic("INFO", "UDP receive loop started localPort=" + sock.localPort)
         val buffer = ByteArray(64)
         val packet = DatagramPacket(buffer, buffer.size)
         while (running.get()) {
@@ -426,7 +1009,8 @@ class GamepadUserService : IGamepadService.Stub() {
                 handlePacket(sock, packet, device)
             } catch (e: Exception) {
                 if (running.get()) {
-                    error = e.message ?: "NES UDP receiver failed."
+                    error = e.javaClass.simpleName + ": " + (e.message ?: "NES UDP receiver failed.")
+                    diagnostic("ERROR", "UDP receive loop failed", e)
                     stop()
                 }
             }
@@ -465,12 +1049,23 @@ class GamepadUserService : IGamepadService.Stub() {
                 peerAddress = sender
                 peerPort = senderPort
                 lastSequence = -1L
+                diagnostic("INFO", "Accepted first controller peer " + sender.hostAddress + ":" + senderPort)
             }
             if (!isNewerSequence(sequence, lastSequence)) return@synchronized
             device.setMask(mask)
+            if (mask != lastLoggedMask) {
+                diagnostic("INFO", "Input mask changed from=0x" + lastLoggedMask.toString(16) +
+                    " to=0x" + mask.toString(16) + " peer=" + sender.hostAddress + ":" + senderPort +
+                    " sequence=" + sequence)
+                lastLoggedMask = mask
+            }
             lastSequence = sequence
             lastPacketNanos = now
-            received.incrementAndGet()
+            val total = received.incrementAndGet()
+            if (total % 120L == 0L) {
+                diagnostic("DEBUG", "Accepted UDP packets=" + total + " sequence=" + sequence +
+                    " mask=0x" + mask.toString(16) + " peer=" + sender.hostAddress + ":" + senderPort)
+            }
             accepted = true
         }
 
@@ -505,14 +1100,18 @@ class GamepadUserService : IGamepadService.Stub() {
                     if (running.get() && peerAddress != null &&
                         System.nanoTime() - lastPacketNanos > FAILSAFE_TIMEOUT_NANOS
                     ) {
+                        diagnostic("WARN", "Controller peer timed out; releasing buttons for " +
+                            (peerAddress?.hostAddress ?: "unknown") + ":" + peerPort)
                         device.setMask(0)
+                        lastLoggedMask = 0
                         peerAddress = null
                         peerPort = -1
                         lastSequence = -1L
                     }
                 }
             } catch (e: Exception) {
-                error = e.message ?: "NES input failsafe failed."
+                error = e.javaClass.simpleName + ": " + (e.message ?: "NES input failsafe failed.")
+                diagnostic("ERROR", "Input failsafe failed", e)
                 stop()
                 return
             }
@@ -523,12 +1122,16 @@ class GamepadUserService : IGamepadService.Stub() {
         synchronized(inputLock) {
             val device = pad ?: throw IllegalStateException("Virtual gamepad is not registered.")
             if (!running.get()) throw IllegalStateException("NES receiver is not running.")
-            device.setMask(mask and 0xff)
+            val cleanMask = mask and 0xff
+            if (cleanMask != lastLoggedMask) diagnostic("INFO", "Local setButtons mask=0x" + cleanMask.toString(16))
+            device.setMask(cleanMask)
+            lastLoggedMask = cleanMask
         }
     }
 
     @Synchronized
     override fun stop() {
+        diagnostic("INFO", "stop() called running=" + running.get() + " packetsReceived=" + received.get())
         running.set(false)
         synchronized(inputLock) {
             peerAddress = null
@@ -543,7 +1146,9 @@ class GamepadUserService : IGamepadService.Stub() {
             try { currentProcess?.outputStream?.close() } catch (_: Exception) { }
             try { currentProcess?.destroy() } catch (_: Exception) { }
             pad = null
+            lastLoggedMask = 0
         }
+        diagnostic("INFO", "stop() completed; uinput/socket references cleared")
     }
 
     override fun isRunning(): Boolean =
@@ -552,7 +1157,18 @@ class GamepadUserService : IGamepadService.Stub() {
     override fun lastError(): String = error
     override fun packetsReceived(): Long = received.get()
 
+    override fun drainLogs(): String = synchronized(diagnosticLock) {
+        val output = StringBuilder()
+        var count = 0
+        while (diagnosticLines.isNotEmpty() && count < 80 && output.length < 200_000) {
+            output.append(diagnosticLines.removeFirst()).append('\n')
+            count++
+        }
+        output.toString()
+    }
+
     override fun destroy() {
+        diagnostic("INFO", "Shizuku user service destroy() invoked")
         stop()
         AndroidProcess.killProcess(AndroidProcess.myPid())
     }
@@ -682,6 +1298,7 @@ interface IGamepadService {
     boolean isRunning();
     String lastError();
     long packetsReceived();
+    String drainLogs();
     void destroy();
 }
 '''
@@ -739,6 +1356,9 @@ gradle.write_text(g, encoding="utf-8")
 print("Configured Shizuku dependencies, AIDL generation, and BuildConfig.")
 manifest = root / "AndroidManifest.xml"
 xml = manifest.read_text(encoding="utf-8")
+legacy_log_permission = '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />'
+if "android.permission.WRITE_EXTERNAL_STORAGE" not in xml:
+ xml = re.sub(r'(<manifest\b[^>]*>)', r'\1\n    ' + legacy_log_permission, xml, count=1)
 if "moe.shizuku.privileged.api" not in xml:
  xml = re.sub(r'(<application\b)', '<queries>\n        <package android:name="moe.shizuku.privileged.api" />\n    </queries>\n\n    \\1', xml, count=1)
 provider = '''        <provider
@@ -755,6 +1375,7 @@ default_main_activity = kotlin / "MainActivity.kt"
 if default_main_activity.exists():
     default_main_activity.unlink()
 write(controller_kotlin / "MainActivity.kt", controller_activity)
+write(kotlin / "ReceiverLogger.kt", receiver_logger)
 write(receiver_kotlin / "MainActivity.kt", main)
 write(kotlin / "GamepadUserService.kt", user_service)
 write(kotlin / "UinputGamepad.kt", uinput)
