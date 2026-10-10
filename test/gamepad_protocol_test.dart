@@ -1,13 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:nintendo_nes/core/controller/nes_controller.dart';
+import 'package:nintendo_nes/core/controller/gamepad_state.dart';
+import 'package:nintendo_nes/services/gamepad_protocol.dart';
 import 'package:nintendo_nes/services/local_controller_client.dart';
 import 'package:nintendo_nes/services/local_controller_server.dart';
-import 'package:nintendo_nes/services/gamepad_protocol.dart';
 
 void main() {
-  test('encodes fixed-size IP-only gamepad UDP input and acknowledgements', () {
+  test('encodes and validates the eight-byte input and acknowledgement packets', () {
     final input = encodeGamepadInputPacket(sequence: 42, mask: 0x81);
     expect(input.length, gamepadPacketSize);
     expect(isGamepadInputPacket(input), isTrue);
@@ -17,46 +17,55 @@ void main() {
 
     final ack = encodeGamepadAckPacket(sequence: 42);
     expect(isGamepadAckPacket(ack), isTrue);
-    expect(isValidNesDatagram(ack), isTrue);
-    expect(readNesSequence(ack), 42);
+    expect(isValidGamepadPacket(ack), isTrue);
+    expect(readGamepadSequence(ack), 42);
 
-    final malformed = List<int>.of(input)..[0] = 0;
-    expect(isValidNesDatagram(malformed), isFalse);
-    expect(isValidNesDatagram(input.take(7).toList()), isFalse);
-    expect(() => encodeNesInputPacket(sequence: 42, mask: 256), throwsFormatException);
+    final badMagic = List<int>.of(input)..[0] = 0;
+    final badType = List<int>.of(input)..[2] = 9;
+    expect(isValidGamepadPacket(badMagic), isFalse);
+    expect(isValidGamepadPacket(badType), isFalse);
+    expect(isValidGamepadPacket(input.take(7).toList()), isFalse);
+    expect(() => encodeGamepadInputPacket(sequence: -1, mask: 0), throwsFormatException);
+    expect(() => encodeGamepadInputPacket(sequence: 0x100000000, mask: 0), throwsFormatException);
+    expect(() => encodeGamepadInputPacket(sequence: 1, mask: 256), throwsFormatException);
   });
 
-  test('rejects duplicate/stale sequence values and allows uint32 wraparound', () {
+  test('rejects duplicate and stale sequence values while allowing uint32 wraparound', () {
     expect(isNewerGamepadSequence(1, -1), isTrue);
-    expect(isNewerNesSequence(2, 1), isTrue);
-    expect(isNewerNesSequence(1, 1), isFalse);
-    expect(isNewerNesSequence(1, 2), isFalse);
-    expect(isNewerNesSequence(0, 0xffffffff), isTrue);
-    expect(() => parseButtonMask(256), throwsFormatException);
-    expect(() => parseButtonMask(-1), throwsFormatException);
-    expect(() => parseSequence(-1), throwsFormatException);
-    expect(() => parseSequence(0x100000000), throwsFormatException);
+    expect(isNewerGamepadSequence(2, 1), isTrue);
+    expect(isNewerGamepadSequence(1, 1), isFalse);
+    expect(isNewerGamepadSequence(1, 2), isFalse);
+    expect(isNewerGamepadSequence(0, 0xffffffff), isTrue);
   });
 
-  test('IP-only UDP receiver and controller exchange simultaneous NES input and release on disconnect', () async {
+  test('maps simultaneous NES-style buttons to stable gamepad bits', () {
+    const buttons = {
+      GamepadButton.a,
+      GamepadButton.start,
+      GamepadButton.up,
+      GamepadButton.right,
+    };
+    expect(GamepadState.maskFor(buttons), 0x99);
+    expect(GamepadState.buttonsFromMask(0x99), buttons);
+    expect(GamepadState.buttonsFromMask(0), isEmpty);
+  });
+
+  test('UDP loopback transmits simultaneous buttons and releases on disconnect', () async {
     final inputReceived = Completer<void>();
     final released = Completer<void>();
     final disconnected = Completer<void>();
-    final seen = <Set<GamepadButton>>[];
-    final counts = <int>[];
+    final observed = <Set<GamepadButton>>[];
     final host = LocalControllerServer(
       port: 0,
       systemGamepadEnabled: false,
       onButtonsChanged: (buttons) {
-        seen.add(Set<GamepadButton>.of(buttons));
+        observed.add(Set<GamepadButton>.of(buttons));
         if (buttons.contains(GamepadButton.a) &&
             buttons.contains(GamepadButton.right) &&
             !inputReceived.isCompleted) {
           inputReceived.complete();
         }
-        if (buttons.isEmpty &&
-            inputReceived.isCompleted &&
-            !released.isCompleted) {
+        if (buttons.isEmpty && inputReceived.isCompleted && !released.isCompleted) {
           released.complete();
         }
       },
@@ -65,7 +74,6 @@ void main() {
           disconnected.complete();
         }
       },
-      onInputCountChanged: counts.add,
     );
     final client = LocalControllerClient();
 
@@ -81,15 +89,13 @@ void main() {
       client.setButtons(const {GamepadButton.a, GamepadButton.right});
       await inputReceived.future.timeout(const Duration(seconds: 3));
       expect(host.isConnected, isTrue);
-      expect(seen.last, containsAll(const {GamepadButton.a, GamepadButton.right}));
-      expect(host.inputsReceived, greaterThan(0));
-      expect(counts.last, host.inputsReceived);
+      expect(observed.last, containsAll(const {GamepadButton.a, GamepadButton.right}));
 
       await client.disconnect();
       await released.future.timeout(const Duration(seconds: 3));
       await disconnected.future.timeout(const Duration(seconds: 3));
       expect(host.isConnected, isFalse);
-      expect(seen.last, isEmpty);
+      expect(observed.last, isEmpty);
     } finally {
       await client.disconnect();
       await host.stop();

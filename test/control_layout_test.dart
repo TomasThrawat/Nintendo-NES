@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:nintendo_nes/core/controller/nes_controller.dart';
+import 'package:nintendo_nes/core/controller/gamepad_state.dart';
 import 'package:nintendo_nes/services/control_layout.dart';
 
 void main() {
@@ -8,7 +8,7 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  test('provides individual editable defaults for every NES button', () async {
+  test('provides individual editable defaults for every gamepad button', () async {
     final placements = await ControlLayoutStore.load();
     expect(placements.keys.toSet(), GamepadButton.values.toSet());
     expect(placements.values.every((p) => p.visible), isTrue);
