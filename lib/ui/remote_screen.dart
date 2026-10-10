@@ -267,7 +267,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
           if (widget.romName != null) ...<Widget>[
             const SizedBox(height: 14),
             Text(
-              'Loaded ROM: ' + widget.romName!,
+              'Loaded ROM: ${widget.romName}',
               style: const TextStyle(color: Colors.white, fontSize: 16),
             ),
           ],
@@ -310,7 +310,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
             style: const TextStyle(color: Colors.white, fontSize: 18),
             decoration: _input('Receiver IPv4 address'),
             onSubmitted: (_) {
-              if (!_busy) _connectController();
+              if (!_busy) unawaited(_connectController());
             },
           ),
           const SizedBox(height: 14),
@@ -381,7 +381,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
                 if (_server.isListening) ...<Widget>[
                   const SizedBox(height: 4),
                   Text(
-                    _inputsReceived.toString() + ' received NES input frames',
+                    '$_inputsReceived received NES input frames',
                     style: const TextStyle(color: Colors.white70),
                   ),
                 ],
@@ -470,7 +470,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
                     const SizedBox(width: 7),
                     Flexible(
                       child: Text(
-                        'Connected to ' + _hostInput.text.trim(),
+                        'Connected to ${_hostInput.text.trim()}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(color: Colors.white),
@@ -515,7 +515,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
                         child: Row(
                           children: <Widget>[
                             Text(
-                              'Edit ' + _selectedButton.name.toUpperCase(),
+                              'Edit ${_selectedButton.name.toUpperCase()}',
                               style: const TextStyle(color: Colors.white),
                             ),
                             const SizedBox(width: 8),
@@ -543,7 +543,6 @@ class _RemoteScreenState extends State<RemoteScreen> {
                               checkColor: Colors.black,
                               onChanged: (value) {
                                 if (value == null) return;
-                                final button = _selectedButton;
                                 unawaited(
                                   _saveSelectedPlacement(
                                     selected.copyWith(visible: value),

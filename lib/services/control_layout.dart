@@ -82,5 +82,5 @@ class ControlLayoutStore {
   }
 
   static String _key(NesButton button, String field) =>
-      _prefix + button.name + '_' + field;
+      '$_prefix${button.name}_$field';
 }

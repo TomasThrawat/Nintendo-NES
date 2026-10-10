@@ -146,7 +146,7 @@ class LocalControllerServer {
     onInputCountChanged?.call(_inputsReceived);
     onButtonsChanged(NesController.buttonsFromMask(mask));
 
-    // A signed ACK allows the controller app to show real receiver reachability.
+    // An ACK lets the controller verify receiver reachability.
     _socket?.send(
       encodeNesAckPacket(sequence: sequence),
       datagram.address,

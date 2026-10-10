@@ -4,7 +4,7 @@ import 'dart:io';
 import '../core/controller/nes_controller.dart';
 import 'remote_protocol.dart';
 
-/// WiFiPad-style UDP sender with signed NES input updates at ~60 Hz.
+/// WiFiPad-style IP-only UDP sender for NES input updates at ~60 Hz.
 class LocalControllerClient {
   RawDatagramSocket? _socket;
   InternetAddress? _targetAddress;
