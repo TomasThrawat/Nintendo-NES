@@ -549,7 +549,6 @@ class _RemoteScreenState extends State<RemoteScreen> {
                                     selected.copyWith(visible: value),
                                   ),
                                 );
-                                setState(() => _selectedButton = button);
                               },
                             ),
                             IconButton(
@@ -626,7 +625,7 @@ class _RemoteScreenState extends State<RemoteScreen> {
                           color: _pressed.contains(button) && !_editing
                               ? Colors.black
                               : Colors.white,
-                          fontSize: math.max(12, buttonHeight * 0.22),
+                          fontSize: math.max(12.0, buttonHeight * 0.22),
                           fontWeight: FontWeight.bold,
                         ),
                       ),

@@ -8,7 +8,8 @@ void main() {
     await tester.pumpWidget(const NesWifiControllerApp());
     expect(find.text('NES Wi-Fi Controller'), findsOneWidget);
     expect(find.text('Receiver IPv4 address'), findsOneWidget);
-    expect(find.text('No pairing code is needed.'), findsOneWidget);
+    expect(find.text('16-character pairing code'), findsNothing);
+    expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Start NES receiver'), findsNothing);
     expect(find.text('Xbox 360 Controller'), findsNothing);
   });

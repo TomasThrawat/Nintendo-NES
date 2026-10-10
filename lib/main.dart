@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
-import 'core/controller/nes_controller.dart';
 import 'core/emulator.dart';
 import 'ui/remote_screen.dart';
 

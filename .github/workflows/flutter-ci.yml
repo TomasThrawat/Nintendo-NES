@@ -125,16 +125,16 @@ jobs:
           for feature in features:
               feature_name = re.search(r'android:name="([^"]+)"', feature).group(1)
               if f'android:name="{feature_name}"' not in content:
-                  content = re.sub(r'(<manifest\\b[^>]*>)', r'\\1\\n' + feature, content, count=1)
+                  content = re.sub(r'(<manifest\b[^>]*>)', r'\1\n' + feature, content, count=1)
           content, application_count = re.subn(
-              r'(<application\\b[^>]*)(>)',
-              r'\\1 android:banner="@drawable/tv_banner"\\2',
+              r'(<application\b[^>]*)(>)',
+              r'\1 android:banner="@drawable/tv_banner"\2',
               content,
               count=1,
           )
           if application_count != 1:
               raise SystemExit("Could not add the Android TV banner attribute.")
-          activity_match = re.search(r'<activity\\b[^>]*android:name="\\.MainActivity"[^>]*>', content, re.S)
+          activity_match = re.search(r'<activity\b[^>]*android:name="\.MainActivity"[^>]*>', content, re.S)
           if not activity_match:
               raise SystemExit("Could not locate Flutter MainActivity for TV launch configuration.")
           activity_tag = activity_match.group(0)
@@ -142,7 +142,7 @@ jobs:
               changed_tag = activity_tag[:-1] + ' android:screenOrientation="${appOrientation}">'
               content = content.replace(activity_tag, changed_tag, 1)
           activity_match = re.search(
-              r'(<activity\\b[^>]*android:name="\\.MainActivity"[^>]*>[\\s\\S]*?</activity>)',
+              r'(<activity\b[^>]*android:name="\.MainActivity"[^>]*>[\s\S]*?</activity>)',
               content,
               re.S,
           )
@@ -151,8 +151,8 @@ jobs:
           activity_block = activity_match.group(1)
           if "android.intent.category.LEANBACK_LAUNCHER" not in activity_block:
               activity_block, category_count = re.subn(
-                  r'(<category\\b[^>]*android:name="android\\.intent\\.category\\.LAUNCHER"[^>]*/>)',
-                  r'\\1\\n                    <category android:name="android.intent.category.LEANBACK_LAUNCHER" />',
+                  r'(<category\b[^>]*android:name="android\.intent\.category\.LAUNCHER"[^>]*/>)',
+                  r'\1\n                    <category android:name="android.intent.category.LEANBACK_LAUNCHER" />',
                   activity_block,
                   count=1,
               )
@@ -175,9 +175,6 @@ jobs:
               <path android:fillColor="#000000" android:pathData="M225,70a9,9 0,1 0,18 0a9,9 0,1 0,-18 0 M244,91a9,9 0,1 0,18 0a9,9 0,1 0,-18 0" />
           </vector>
           """, encoding="utf-8")
-
-          gradle = Path("android/app/build.gradle.kts")
-          source = gradle.read_text()
 
           gradle = Path("android/app/build.gradle.kts")
           source = gradle.read_text()
